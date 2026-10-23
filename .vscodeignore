@@ -4,6 +4,7 @@
 src/**
 test/**
 scripts/**
+docs/**
 tsconfig.json
 .vscode/**
 .vscode-test/**

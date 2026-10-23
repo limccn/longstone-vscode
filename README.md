@@ -145,6 +145,10 @@ is local-only, and the extension never reads or writes wallet data there.
   not in the editor or Output panel. Copying puts it on the system clipboard,
   and clipboard history may retain it.
 
+Manual GUI verification — including the at-rest `state.vscdb` check — is in the
+[wallet verification runbook](https://github.com/limccn/longstone-vscode/blob/main/docs/wallet-verification.md).
+It is a signed-off manual runbook; CI never launches VS Code.
+
 Wallet commands (all available from the command palette; the status bar opens
 `Longstone: Manage Wallet`):
 
@@ -246,6 +250,7 @@ pnpm --dir longstone-vscode test            # plain Node tests, no VS Code host
 pnpm --dir longstone-vscode build           # esbuild: extension.cjs + two webviews
 pnpm --dir longstone-vscode assert:manifest # packaging contract assertions
 pnpm --dir longstone-vscode audit:bundle    # wallet/signing/key-material bundle audit
+pnpm --dir longstone-vscode check:wallet-db -- --db <state.vscdb>  # read-only at-rest check
 pnpm --dir longstone-vscode package         # build + vsce 4.0.0
 ```
 
