@@ -145,6 +145,7 @@
     "build": "node scripts/build.mjs",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "test": "node --test test/*.test.mjs",
+    "check:wallet-db": "node scripts/check-wallet-db.mjs",
     "assert:manifest": "node scripts/assert-manifest.mjs",
     "audit:bundle": "node scripts/audit-bundle.mjs",
     "package": "node scripts/build.mjs && vsce package --no-dependencies",
