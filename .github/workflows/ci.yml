@@ -15,9 +15,9 @@ concurrency:
 #   workspace/
 #   ├── pnpm-workspace.yaml
 #   ├── menhir/                         (sibling repo; @limccn/menhir-core)
-#   ├── longstone-ui/                   (sibling repo; longstone-surface)
+#   ├── longstone-surface/              (sibling repo; @limccn/longstone-surface)
 #   └── longstone-vscode/               (this repo)
-# The sibling checkouts need a token with read access to those repos.
+# The sibling repos are public; the workflow token can read them.
 
 jobs:
   verify:
@@ -31,12 +31,12 @@ jobs:
         uses: actions/checkout@v4
         with:
           path: workspace/longstone-vscode
-      - name: Checkout longstone-ui (@limccn/longstone-surface)
+      - name: Checkout longstone-surface (@limccn/longstone-surface)
         uses: actions/checkout@v4
         with:
-          repository: limccn/longstone-ui
-          token: ${{ secrets.LONGSTONE_UI_REPO_TOKEN || github.token }}
-          path: workspace/longstone-ui
+          repository: limccn/longstone-surface
+          token: ${{ github.token }}
+          path: workspace/longstone-surface
       - name: Checkout menhir (@limccn/menhir-core)
         uses: actions/checkout@v4
         with:
@@ -47,7 +47,7 @@ jobs:
         working-directory: workspace
         shell: bash
         run: |
-          printf 'packages:\n  - "menhir/ts"\n  - "longstone-ui/packages/longstone-surface"\n  - "longstone-vscode"\nallowBuilds:\n  "esbuild": true\n  "@vscode/vsce-sign": true\n' > pnpm-workspace.yaml
+          printf 'packages:\n  - "menhir/ts"\n  - "longstone-surface"\n  - "longstone-vscode"\nallowBuilds:\n  "esbuild": true\n  "@vscode/vsce-sign": true\n' > pnpm-workspace.yaml
           printf '{"name":"ci-workspace","private":true,"packageManager":"pnpm@12.11.2"}\n' > package.json
 
       - uses: pnpm/action-setup@v4
