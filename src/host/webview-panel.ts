@@ -24,6 +24,7 @@ import {
 import { isAllowedExternalUrl, isUriInsideCspSource } from '../shared/deep-link.ts';
 import { WEBVIEW_TITLE, WEBVIEW_VIEW_TYPE } from '../shared/constants.ts';
 import { validateSettings, type ValidatedSettings } from '../shared/settings.ts';
+import { isWalletOwner } from './wallet/owner-filter.ts';
 
 export interface PanelDeps {
   extensionUri: vscode.Uri;
@@ -38,6 +39,12 @@ function nonce(): string {
 
 export class MemoryBrowserPanel {
   private panel: vscode.WebviewPanel | undefined;
+  /**
+   * Active wallet address while unlocked. Cached on the instance so an unlock
+   * before the first `show()` still seeds the filter; cleared on lock, reset
+   * and external delete. Never persisted and never a setting.
+   */
+  private walletOwner: string | null = null;
 
   constructor(private readonly deps: PanelDeps) {}
 
@@ -76,6 +83,20 @@ export class MemoryBrowserPanel {
     if (this.panel !== undefined) this.render();
   }
 
+  /**
+   * Follow the wallet session (design §8.8). Only the owner message is posted:
+   * no re-render, no scan, no index/cache reset and no storage write. With no
+   * open panel the value is cached for the next `show()`/`render()`; a
+   * malformed address is ignored so it can never reach the webview as owner.
+   */
+  setWalletOwner(owner: string | null): void {
+    if (owner !== null && !isWalletOwner(owner)) return;
+    this.walletOwner = owner;
+    if (this.panel !== undefined) {
+      void this.panel.webview.postMessage({ type: 'walletOwner', owner });
+    }
+  }
+
   private async onMessage(message: unknown): Promise<void> {
     if (typeof message !== 'object' || message === null) return;
     const typed = message as { type?: unknown; url?: unknown };
@@ -111,6 +132,7 @@ export class MemoryBrowserPanel {
       settings,
       issues,
       keyPresence: this.deps.keyPresence(),
+      walletOwner: this.walletOwner,
     });
   }
 
@@ -154,6 +176,7 @@ export class MemoryBrowserPanel {
       settings,
       issues,
       keyPresence: this.deps.keyPresence(),
+      walletOwner: this.walletOwner,
     });
   }
 }

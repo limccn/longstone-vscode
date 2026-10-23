@@ -1,5 +1,8 @@
 import assert from 'node:assert/strict';
+import { readFileSync, readdirSync } from 'node:fs';
+import path from 'node:path';
 import test from 'node:test';
+import { fileURLToPath } from 'node:url';
 
 import {
   MCP_ARGS,
@@ -225,3 +228,114 @@ test('a timeout is reported as a timeout with the cache hint', () => {
   assert.match(result.message, /Timed out/);
   assert.match(result.message, /npm cache/);
 });
+
+// ---------------------------------------------------------------------------
+// MCP/wallet boundary invariants (design §9, prd R12/AC-10).
+//
+// The wallet must never become an MCP key channel. These tests pin the provider
+// env exactly and scan the sources for the ways a key could leak across the
+// boundary. The provider module itself is not modified.
+// ---------------------------------------------------------------------------
+
+const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
+
+/**
+ * Remove comments before scanning. The invariant is about real API/token use;
+ * prose that says "SecretStorage is never used" must not count as a use.
+ * URLs inside strings are truncated by the `//` rule, which is harmless here:
+ * only identifier-shaped tokens are searched for.
+ */
+function stripComments(source) {
+  return source.replace(/\/\*[\s\S]*?\*\//g, '').replace(/\/\/[^\n]*/g, '');
+}
+
+/** Every `.ts` file under `dir`, sorted, as absolute paths. */
+function sourceFiles(dir) {
+  const found = [];
+  for (const entry of readdirSync(dir, { withFileTypes: true })) {
+    const full = path.join(dir, entry.name);
+    if (entry.isDirectory()) found.push(...sourceFiles(full));
+    else if (entry.name.endsWith('.ts')) found.push(full);
+  }
+  return found.sort();
+}
+
+/** Forbidden tokens that survive comment stripping. */
+function leakedTokens(source, tokens) {
+  const code = stripComments(source);
+  return tokens.filter((token) => code.includes(token));
+}
+
+function sourceLeaks(root, tokens) {
+  const leaks = [];
+  for (const file of sourceFiles(root)) {
+    const found = leakedTokens(readFileSync(file, 'utf8'), tokens);
+    for (const token of found) leaks.push(`${path.relative(ROOT, file)}: ${token}`);
+  }
+  return leaks;
+}
+
+test('providerEnv has exactly the two read-only keys and no signing key', () => {
+  for (const allowWriteTools of [false, true]) {
+    const env = providerEnv({ allowWriteTools });
+    assert.deepEqual(Object.keys(env).sort(), [OWNER_KEY_ENV, READ_ONLY_ENV].sort());
+    assert.equal(Object.hasOwn(env, 'LONGSTONE_KEY'), false, String(allowWriteTools));
+    assert.equal(env[OWNER_KEY_ENV], null, String(allowWriteTools));
+  }
+});
+
+test('keyPresence reports booleans only', () => {
+  for (const env of [
+    {},
+    { LONGSTONE_KEY: '0xdeadbeef' },
+    { LONGSTONE_OWNER_KEY: '0xdeadbeef' },
+    { LONGSTONE_KEY: '', LONGSTONE_OWNER_KEY: '' },
+  ]) {
+    const presence = keyPresence(env);
+    assert.equal(typeof presence.keyPresent, 'boolean');
+    assert.equal(typeof presence.ownerKeyPresent, 'boolean');
+  }
+});
+
+test('the wallet sources never touch the MCP key channel', () => {
+  const leaks = sourceLeaks(path.join(ROOT, 'src/host/wallet'), [
+    'LONGSTONE_KEY',
+    'OWNER_KEY_ENV',
+    'process.env',
+    'mcp-provider',
+  ]);
+  assert.deepEqual(leaks, []);
+});
+
+test('the extension uses no second key store and registers no LM tool', () => {
+  // `global-state.ts` and `extension.ts` mention these names only in prose;
+  // stripComments makes this assertion about actual code usage.
+  const leaks = sourceLeaks(path.join(ROOT, 'src'), [
+    'SecretStorage',
+    'setKeysForSync',
+    'globalStorageUri',
+    'vscode.lm.registerTool',
+  ]);
+  assert.deepEqual(leaks, []);
+});
+
+test('the source scanner is non-vacuous: it finds code and ignores comments', () => {
+  const synthetic = [
+    '// process.env is mentioned in prose only',
+    '/* SecretStorage and LONGSTONE_KEY live in this comment */',
+    "const label = 'src/host/mcp-provider.ts';",
+    'const leaked = process.env.LONGSTONE_KEY;',
+    'vscode.lm.registerTool(...)',
+  ].join('\n');
+  assert.deepEqual(
+    leakedTokens(synthetic, ['process.env', 'SecretStorage', 'LONGSTONE_KEY', 'mcp-provider']),
+    ['process.env', 'LONGSTONE_KEY', 'mcp-provider'],
+  );
+  assert.deepEqual(leakedTokens(synthetic, ['vscode.lm.registerTool']), [
+    'vscode.lm.registerTool',
+  ]);
+  // The real scan is not empty: it actually visits the wallet sources.
+  assert.ok(sourceFiles(path.join(ROOT, 'src/host/wallet')).length >= 10);
+  assert.ok(sourceFiles(path.join(ROOT, 'src')).length >= 20);
+});
+

@@ -1,21 +1,25 @@
 #!/usr/bin/env node
 /**
- * Build: two esbuild bundles into dist/.
+ * Build: three esbuild bundles into dist/.
  *
- * - `dist/extension.cjs` — the extension host (CJS, `vscode` external, Node).
- *   The `.cjs` extension is required because package.json is `"type": "module"`
- *   (Node's TypeScript stripping needs ESM for the `.ts` test imports) and VS
- *   Code loads `main` with `require`; a `.js` file here would be parsed as ESM.
- * - `dist/webview.js`   — the webview (ESM browser bundle, everything inlined
- *   except the `vscode` API, which the webview never imports).
+ * - `dist/extension.cjs`      — the extension host (CJS, `vscode` external,
+ *   Node). The `.cjs` extension is required because package.json is
+ *   `"type": "module"` (Node's TypeScript stripping needs ESM for the `.ts`
+ *   test imports) and VS Code loads `main` with `require`; a `.js` file here
+ *   would be parsed as ESM. This is the only bundle allowed to contain the
+ *   shared wallet core (`@limccn/longstone-wallet`).
+ * - `dist/webview.js`         — the memory browser (ESM browser bundle).
+ * - `dist/wallet-webview.js`  — the dedicated secret webview. It carries no
+ *   host API, no network, and no shared-core code.
  *
- * Both builds are `bundle: true`: a webview may not load remote code, and a
+ * All builds are `bundle: true`: a webview may not load remote code, and a
  * host bundle that left `node_modules` imports behind would break inside a
  * VSIX that ships no dependencies.
  *
- * The script fails if the webview bundle contains a `node:` import or a
- * longstone CLI import, which would mean the read-only panel had picked up a
- * key holder or a Node-only module.
+ * Import bans use an exact module specifier match (`from '@limccn/longstone'`
+ * / `require('@limccn/longstone')`), never a prefix regex: a prefix would
+ * also reject `@limccn/longstone-wallet`, and the host legitimately consumes
+ * the wallet core.
  */
 
 import { build } from 'esbuild';
@@ -36,6 +40,27 @@ const COMMON = {
   define: { 'process.env.NODE_ENV': '"production"' },
 };
 
+const NODE_BUILTIN = /(?:require\(["']node:|from\s*["']node:)/;
+
+/** Exact module-specifier import, safe for names that are prefixes of others. */
+function importOf(moduleName) {
+  const escaped = moduleName.replace(/[.*+?^${}()|[\]\\/]/g, '\\$&');
+  return new RegExp(`(?:from\\s*|require\\s*\\(\\s*)["']${escaped}["']`);
+}
+
+// The CLI is the only key holder and must never reach a webview.
+const CLI_IMPORT = importOf('@limccn/longstone');
+// The shared wallet core may only be bundled into the host extension.
+const WALLET_CORE_IMPORT = importOf('@limccn/longstone-wallet');
+
+function isNodeBuiltin(bundle) {
+  return NODE_BUILTIN.test(bundle);
+}
+
+function isEval(bundle) {
+  return /\beval\s*\(/.test(bundle);
+}
+
 async function buildExtension() {
   await build({
     ...COMMON,
@@ -48,7 +73,7 @@ async function buildExtension() {
   });
 }
 
-async function buildWebview() {
+async function buildMemoryWebview() {
   await build({
     ...COMMON,
     entryPoints: ['src/webview/main.ts'],
@@ -62,22 +87,60 @@ async function buildWebview() {
 
   const bundle = await readFile(path.join(DIST, 'webview.js'), 'utf8');
   const problems = [];
-  if (/require\(["']node:/.test(bundle) || /from\s*["']node:/.test(bundle)) {
-    problems.push('a node: builtin is imported by the webview bundle');
+  if (isNodeBuiltin(bundle)) {
+    problems.push('a node: builtin is imported by the memory webview bundle');
   }
-  if (/@limccn\/longstone(?!-surface)/.test(bundle)) {
-    problems.push('the longstone CLI (key holder) is imported by the webview bundle');
+  if (CLI_IMPORT.test(bundle)) {
+    problems.push('the longstone CLI (key holder) is imported by the memory webview bundle');
   }
-  if (/\beval\s*\(/.test(bundle)) {
-    problems.push('the webview bundle contains eval()');
+  if (isEval(bundle)) {
+    problems.push('the memory webview bundle contains eval()');
   }
   if (problems.length > 0) {
-    throw new Error(`webview bundle audit failed:\n- ${problems.join('\n- ')}`);
+    throw new Error(`memory webview bundle audit failed:\n- ${problems.join('\n- ')}`);
+  }
+}
+
+async function buildSecretWebview() {
+  await build({
+    ...COMMON,
+    entryPoints: ['src/wallet-webview/main.ts'],
+    outfile: 'dist/wallet-webview.js',
+    platform: 'browser',
+    format: 'iife',
+    // Same rationale as the memory webview: the secret bundle has no host API.
+    external: ['vscode'],
+  });
+
+  const bundle = await readFile(path.join(DIST, 'wallet-webview.js'), 'utf8');
+  const problems = [];
+  if (isNodeBuiltin(bundle)) {
+    problems.push('a node: builtin is imported by the secret webview bundle');
+  }
+  if (CLI_IMPORT.test(bundle)) {
+    problems.push('the longstone CLI (key holder) is imported by the secret webview bundle');
+  }
+  if (WALLET_CORE_IMPORT.test(bundle)) {
+    problems.push(
+      'the shared wallet core is imported by the secret webview bundle (host-only)',
+    );
+  }
+  if (isEval(bundle)) {
+    problems.push('the secret webview bundle contains eval()');
+  }
+  if (/\bfetch\s*\(/.test(bundle)) {
+    problems.push('the secret webview bundle contains fetch()');
+  }
+  if (problems.length > 0) {
+    throw new Error(`secret webview bundle audit failed:\n- ${problems.join('\n- ')}`);
   }
 }
 
 await rm(DIST, { recursive: true, force: true });
 await mkdir(DIST, { recursive: true });
 await buildExtension();
-await buildWebview();
-process.stdout.write('built dist/extension.cjs and dist/webview.js\n');
+await buildMemoryWebview();
+await buildSecretWebview();
+process.stdout.write(
+  'built dist/extension.cjs, dist/webview.js and dist/wallet-webview.js\n',
+);

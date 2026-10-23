@@ -28,6 +28,11 @@ import { isCommitmentHash } from '../shared/deep-link.ts';
 import { SCAN_CHUNK_SIZE } from '../shared/constants.ts';
 import { SETTINGS_SECTION } from '../shared/settings.ts';
 import {
+  applyWalletOwner,
+  parseWalletOwnerMessage,
+  type OwnerSource,
+} from '../host/wallet/owner-filter.ts';
+import {
   afterExplicitStart,
   afterStop,
   cacheForContext,
@@ -56,6 +61,8 @@ interface AppState {
   index: ChainIndex | null;
   detailHash: string | null;
   ownerFilter: string;
+  /** Why `ownerFilter` holds its value; the wallet only writes while not `manual`. */
+  ownerSource: OwnerSource;
   tagFilter: string[];
   scanning: boolean;
   scanError: string | null;
@@ -89,6 +96,7 @@ const state: AppState = {
   index: null,
   detailHash: null,
   ownerFilter: '',
+  ownerSource: 'empty',
   tagFilter: [],
   scanning: false,
   scanError: null,
@@ -121,6 +129,13 @@ function currentClient(): PublicClient {
   return makePublicClient(state.bootstrap.settings.rpcUrl);
 }
 
+/** Fold a validated wallet owner into the local filter/source pair. */
+function applyOwner(walletOwner: string | null): void {
+  const next = applyWalletOwner(state.ownerFilter, state.ownerSource, walletOwner);
+  state.ownerFilter = next.filter;
+  state.ownerSource = next.source;
+}
+
 function applySettings(next: Bootstrap): void {
   const previous = state.bootstrap;
   const connectionChanged =
@@ -129,6 +144,8 @@ function applySettings(next: Bootstrap): void {
   const wasScanning = state.scanning;
   state.bootstrap = next;
   state.settingsReceived = true;
+  // `parseBootstrap` already reduced the owner to null or 0x + 40 hex.
+  applyOwner(next.walletOwner);
   if (connectionChanged) {
     // Invalidate any in-flight scan: its captured context is the old
     // registry/RPC and must not be merged or cached under the new settings.
@@ -331,8 +348,15 @@ function renderTimeline(main: HTMLElement): void {
   ownerInput.placeholder = 'filter by owner address (optional; empty shows all)';
   ownerInput.value = state.ownerFilter;
   ownerInput.spellcheck = false;
+  // Any edit — including clearing the field — takes ownership of the filter
+  // for this document, so later wallet updates must not refill or overwrite it.
+  ownerInput.addEventListener('input', () => {
+    state.ownerFilter = ownerInput.value;
+    state.ownerSource = 'manual';
+  });
   ownerInput.addEventListener('change', () => {
     state.ownerFilter = ownerInput.value;
+    state.ownerSource = 'manual';
     render();
   });
 
@@ -370,6 +394,9 @@ function renderTimeline(main: HTMLElement): void {
 
   toolbar.append(ownerInput, refresh, stop);
   main.append(toolbar);
+  if (state.ownerSource === 'wallet') {
+    main.append(el('p', 'hint', 'Defaulted from the unlocked wallet'));
+  }
 
   if (state.scanning) {
     const progress = el('p', 'loading', 'Scanning…');
@@ -581,11 +608,27 @@ function renderVerify(main: HTMLElement): void {
   );
 }
 
+/**
+ * A `walletOwner` message is display-only. It must not start a scan, reset the
+ * index/cache, or lift the Stop suppression; those stay bound to settings,
+ * Refresh and Stop (design §8.8). Invalid shapes are ignored wholesale.
+ */
+function handleWalletOwnerMessage(data: unknown): void {
+  const message = parseWalletOwnerMessage(data);
+  if (message === null) return;
+  applyOwner(message.owner);
+  render();
+}
+
 window.addEventListener('message', (event: MessageEvent<unknown>) => {
   const data = event.data;
   if (typeof data !== 'object' || data === null) return;
-  if ((data as { type?: unknown }).type !== 'settings') return;
-  applySettings(parseBootstrap(data));
+  const type = (data as { type?: unknown }).type;
+  if (type === 'settings') {
+    applySettings(parseBootstrap(data));
+    return;
+  }
+  if (type === 'walletOwner') handleWalletOwnerMessage(data);
 });
 
 render();

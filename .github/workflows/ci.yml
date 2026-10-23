@@ -9,13 +9,15 @@ concurrency:
   group: ci-${{ github.ref }}
   cancel-in-progress: true
 
-# `package.json` depends on `@limccn/longstone-surface` and
-# `@limccn/menhir-core` via `workspace:*`, and this repo is one package of the
-# MemoryOverEth workspace. CI assembles that workspace:
+# `package.json` depends on `@limccn/longstone-surface`,
+# `@limccn/longstone-wallet` and `@limccn/menhir-core` via `workspace:*`, and
+# this repo is one package of the MemoryOverEth workspace. CI assembles that
+# workspace:
 #   workspace/
 #   ├── pnpm-workspace.yaml
 #   ├── menhir/                         (sibling repo; @limccn/menhir-core)
 #   ├── longstone-surface/              (sibling repo; @limccn/longstone-surface)
+#   ├── longstone-wallet/               (sibling repo; @limccn/longstone-wallet)
 #   └── longstone-vscode/               (this repo)
 # The sibling repos are public; the workflow token can read them.
 
@@ -37,6 +39,12 @@ jobs:
           repository: limccn/longstone-surface
           token: ${{ github.token }}
           path: workspace/longstone-surface
+      - name: Checkout longstone-wallet (@limccn/longstone-wallet)
+        uses: actions/checkout@v4
+        with:
+          repository: limccn/longstone-wallet
+          token: ${{ github.token }}
+          path: workspace/longstone-wallet
       - name: Checkout menhir (@limccn/menhir-core)
         uses: actions/checkout@v4
         with:
@@ -47,7 +55,7 @@ jobs:
         working-directory: workspace
         shell: bash
         run: |
-          printf 'packages:\n  - "menhir/ts"\n  - "longstone-surface"\n  - "longstone-vscode"\nallowBuilds:\n  "esbuild": true\n  "@vscode/vsce-sign": true\n' > pnpm-workspace.yaml
+          printf 'packages:\n  - "menhir/ts"\n  - "longstone-surface"\n  - "longstone-wallet"\n  - "longstone-vscode"\nallowBuilds:\n  "esbuild": true\n  "@vscode/vsce-sign": true\n' > pnpm-workspace.yaml
           printf '{"name":"ci-workspace","private":true,"packageManager":"pnpm@12.11.2"}\n' > package.json
 
       - uses: pnpm/action-setup@v4
@@ -62,6 +70,16 @@ jobs:
       - run: pnpm --filter @limccn/menhir-core build
         working-directory: workspace
       - run: pnpm --filter @limccn/longstone-surface build
+        working-directory: workspace
+      # The wallet core is consumed through its `dist` build. Its own tests and
+      # typecheck run here too: this repository is the only consumer that
+      # bundles the core into a VSIX, so a shared-core regression must fail
+      # this job before the VS Code gates run.
+      - run: pnpm --filter @limccn/longstone-wallet build
+        working-directory: workspace
+      - run: pnpm --filter @limccn/longstone-wallet typecheck
+        working-directory: workspace
+      - run: pnpm --filter @limccn/longstone-wallet test
         working-directory: workspace
 
       # The manifest assertions need only package.json, constants and README,

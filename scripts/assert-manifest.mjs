@@ -35,6 +35,24 @@ function check(label, fn) {
 const contributes = manifest.contributes ?? {};
 const properties = contributes.configuration?.properties ?? {};
 
+/** The full contributed command list: two existing plus eight wallet commands. */
+const EXPECTED_COMMANDS = [
+  'longstone.showMemoryBrowser',
+  'longstone.reportKeyPresence',
+  'longstone.wallet.manage',
+  'longstone.wallet.create',
+  'longstone.wallet.import',
+  'longstone.wallet.lock',
+  'longstone.wallet.copyAddress',
+  'longstone.wallet.exportSecret',
+  'longstone.wallet.changePassword',
+  'longstone.wallet.reset',
+];
+
+check('the wallet release is version 0.2.0', () => {
+  assert.equal(manifest.version, '0.2.0');
+});
+
 check('main points at the built extension bundle', () => {
   assert.equal(manifest.main, './dist/extension.cjs');
 });
@@ -48,11 +66,12 @@ check('engines.vscode supports the MCP provider API (>= 1.101)', () => {
   );
 });
 
-check('activation events cover startup and both commands', () => {
+check('activation events cover startup and every contributed command', () => {
   const events = manifest.activationEvents ?? [];
   assert.ok(events.includes('onStartupFinished'), 'must activate on startup to register the MCP provider');
-  for (const event of ['onCommand:longstone.showMemoryBrowser', 'onCommand:longstone.reportKeyPresence']) {
-    assert.ok(events.includes(event), `missing ${event}`);
+  const commands = (contributes.commands ?? []).map((entry) => entry.command);
+  for (const command of commands) {
+    assert.ok(events.includes(`onCommand:${command}`), `missing onCommand:${command}`);
   }
 });
 
@@ -63,13 +82,21 @@ check('contributes.mcpServerDefinitionProviders declares id "longstone"', () => 
   assert.equal(typeof providers[0].label, 'string');
 });
 
-check('both read-only commands are contributed', () => {
+check('exactly the ten expected commands are contributed', () => {
   const commands = contributes.commands ?? [];
-  for (const name of ['longstone.showMemoryBrowser', 'longstone.reportKeyPresence']) {
-    const command = commands.find((entry) => entry.command === name);
-    assert.ok(command, `missing ${name}`);
-    assert.equal(typeof command.title, 'string');
+  assert.deepEqual(
+    commands.map((entry) => entry.command).sort(),
+    [...EXPECTED_COMMANDS].sort(),
+  );
+  for (const command of commands) {
+    assert.equal(typeof command.title, 'string', `${command.command} needs a title`);
+    assert.equal(command.category, 'Longstone', `${command.command} needs the Longstone category`);
   }
+});
+
+check('no menus or keybindings are contributed', () => {
+  assert.equal(contributes.menus, undefined, 'the wallet ships no menus');
+  assert.equal(contributes.keybindings, undefined, 'the wallet ships no keybindings');
 });
 
 check('exactly the four endpoint settings and the write switch are contributed', () => {
@@ -105,9 +132,9 @@ check('no configuration property is a key channel', () => {
   }
 });
 
-check('no write command and no languageModelTools duplication', () => {
+check('no command can sign, send, write or manipulate access control', () => {
   for (const entry of contributes.commands ?? []) {
-    assert.doesNotMatch(entry.command, /put|retract|acl|write|sign/i, entry.command);
+    assert.doesNotMatch(entry.command, /sign|send|write|put|retract|acl/i, entry.command);
   }
   assert.equal(contributes.languageModelTools, undefined);
 });
@@ -127,6 +154,18 @@ check('README documents read-only default, write setting and tests', () => {
   assert.match(readme, /read-only/i);
   assert.match(readme, /longstone\.allowWriteTools/);
   assert.match(readme, /pnpm --dir longstone-vscode test/);
+});
+
+check('README describes the local-only, non-signing wallet and the MCP boundary', () => {
+  assert.match(readme, /wallet/i);
+  assert.match(readme, /local-only/i);
+  assert.match(readme, /never signs/i);
+  assert.match(
+    readme,
+    /never injected into the MCP server environment/i,
+    'README must state that wallet secrets are not injected into MCP',
+  );
+  assert.doesNotMatch(readme, /no\s+wallet/i, 'README must not claim there is no wallet');
 });
 
 check('.vscodeignore excludes sources and tooling from the VSIX', () => {

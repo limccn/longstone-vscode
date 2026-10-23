@@ -14,8 +14,46 @@ export const MCP_PROVIDER_LABEL = 'Longstone memory (read-only by default)';
 export const COMMAND_SHOW_BROWSER = 'longstone.showMemoryBrowser';
 export const COMMAND_REPORT_KEY = 'longstone.reportKeyPresence';
 
+/**
+ * Wallet commands (design §7.2). The wallet manages keys and addresses only:
+ * no command signs, sends, or connects to a dApp.
+ */
+export const COMMAND_WALLET_MANAGE = 'longstone.wallet.manage';
+export const COMMAND_WALLET_CREATE = 'longstone.wallet.create';
+export const COMMAND_WALLET_IMPORT = 'longstone.wallet.import';
+export const COMMAND_WALLET_LOCK = 'longstone.wallet.lock';
+export const COMMAND_WALLET_COPY_ADDRESS = 'longstone.wallet.copyAddress';
+export const COMMAND_WALLET_EXPORT_SECRET = 'longstone.wallet.exportSecret';
+export const COMMAND_WALLET_CHANGE_PASSWORD = 'longstone.wallet.changePassword';
+export const COMMAND_WALLET_RESET = 'longstone.wallet.reset';
+
 export const WEBVIEW_VIEW_TYPE = 'longstone.memoryBrowser';
 export const WEBVIEW_TITLE = 'Longstone Memory';
+
+/** Dedicated secret webview type (design §7.5); never shared with the browser. */
+export const WALLET_SECRET_VIEW_TYPE = 'longstone.walletSecret';
+export const WALLET_SECRET_VIEW_TITLE = 'Longstone Wallet — Secret';
+
+/**
+ * Logical keys understood by `@limccn/longstone-wallet`; the host storage
+ * adapter maps them to the physical `globalState` keys below (design §4.1).
+ */
+export const WALLET_LOGICAL_RECORD_KEY = 'wallet.v1';
+export const WALLET_LOGICAL_PENDING_KEY = 'wallet.v1.pending';
+
+/** Physical `globalState` keys. Strings, never objects; never synced. */
+export const WALLET_STORAGE_RECORD_KEY = 'longstone.wallet.v1';
+export const WALLET_STORAGE_PENDING_KEY = 'longstone.wallet.v1.pending';
+
+/** Status bar presentation (design §7.3). Remote windows create no item. */
+export const WALLET_STATUS_PRIORITY = 100;
+export const WALLET_STATUS_TEXT_NO_VAULT = '$(wallet) Longstone Wallet';
+export const WALLET_STATUS_TEXT_LOCKED = '$(lock) Longstone Wallet: Locked';
+/** UNLOCKED renders this icon followed by the truncated active address. */
+export const WALLET_STATUS_ICON_UNLOCKED = '$(unlock)';
+export const WALLET_STATUS_TOOLTIP_NO_VAULT = 'Set up a local encrypted wallet';
+export const WALLET_STATUS_TOOLTIP_LOCKED = 'Click to unlock';
+export const WALLET_STATUS_TOOLTIP_UNLOCKED = 'click to manage';
 
 /** The CLI package the provider launches. Exact pin, never a range (PS-5). */
 export const LONGSTONE_PACKAGE = '@limccn/longstone';

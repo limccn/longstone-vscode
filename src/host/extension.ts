@@ -20,14 +20,26 @@ import {
   LONGSTONE_PACKAGE,
   MCP_PROVIDER_ID,
   OWNER_KEY_ENV,
+  WALLET_STATUS_PRIORITY,
 } from '../shared/constants.ts';
 import { SETTINGS_SECTION, SETTING_KEYS } from '../shared/settings.ts';
 import { runCliProbe } from './cli-probe.ts';
 import { buildServerDefinition, keyPresence, type ProviderServer } from './mcp-provider.ts';
+import {
+  WALLET_COMMAND_IDS,
+  createWalletCommandHandlers,
+  type WalletCommandHost,
+} from './wallet/commands.ts';
+import { createWalletController, type WalletController } from './wallet/controller.ts';
+import { walletAvailability } from './wallet/availability.ts';
+import { MementoStorage } from './wallet/global-state.ts';
+import { createSecretPanel, type SecretPanel } from './wallet/secret-panel.ts';
+import { createWalletStatusBar, type WalletStatusState } from './wallet/status-bar.ts';
 import { MemoryBrowserPanel } from './webview-panel.ts';
 
 let probeCache: { result: Awaited<ReturnType<typeof runCliProbe>> } | undefined;
 let panelRef: MemoryBrowserPanel | undefined;
+let walletRef: { controller: WalletController; panel: SecretPanel } | undefined;
 
 function log(message: string): void {
   // One channel, no secrets: callers never pass key values here.
@@ -158,8 +170,136 @@ export function activate(context: vscode.ExtensionContext): void {
       await vscode.window.showInformationMessage(`Longstone: ${message}${owner}`);
     }),
   );
+
+  // -------------------------------------------------------------------------
+  // Wallet (Phase D). MCP and memory-browser behaviour above is unchanged;
+  // the wallet adds its own storage, controller, status item and commands.
+  // -------------------------------------------------------------------------
+
+  const availability = walletAvailability({ remoteName: vscode.env.remoteName });
+  const statusBar = createWalletStatusBar({
+    available: availability.available,
+    createItem: () => {
+      const item = vscode.window.createStatusBarItem(
+        vscode.StatusBarAlignment.Right,
+        WALLET_STATUS_PRIORITY,
+      );
+      context.subscriptions.push(item);
+      return {
+        get text(): string {
+          return item.text;
+        },
+        set text(value: string) {
+          item.text = value;
+        },
+        get tooltip(): string | undefined {
+          return typeof item.tooltip === 'string' ? item.tooltip : undefined;
+        },
+        set tooltip(value: string | undefined) {
+          item.tooltip = value;
+        },
+        get command(): string | undefined {
+          return typeof item.command === 'string' ? item.command : undefined;
+        },
+        set command(value: string | undefined) {
+          item.command = value;
+        },
+        show: () => {
+          item.show();
+        },
+        hide: () => {
+          item.hide();
+        },
+        dispose: () => {
+          item.dispose();
+        },
+      };
+    },
+  });
+  // The status sink is the controller's single state-change hook: unlock,
+  // every lock reason (manual, focus, idle, external change), reset, external
+  // delete and active-account switch all pass through it. Mirroring the owner
+  // here keeps the memory browser in step without a second observer and
+  // without coupling owner updates to scans (design §8.8).
+  const statusSink = {
+    update(state: WalletStatusState): void {
+      statusBar.update(state);
+      panelRef?.setWalletOwner(state.status === 'UNLOCKED' ? state.address : null);
+    },
+    dispose(): void {
+      statusBar.dispose();
+    },
+  };
+  const controller = createWalletController({
+    storage: new MementoStorage(context.globalState),
+    availability,
+    statusBar: statusSink,
+  });
+  const secretPanel = createSecretPanel({
+    extensionUri: context.extensionUri,
+    controller,
+  });
+  walletRef = { controller, panel: secretPanel };
+
+  const showQuickPick: WalletCommandHost['showQuickPick'] = async (items, options) => {
+    const picked = await vscode.window.showQuickPick(items, options);
+    return picked as (typeof items)[number] | undefined;
+  };
+
+  const host: WalletCommandHost = {
+    showInputBox: async (options) => vscode.window.showInputBox(options),
+    showQuickPick,
+    showErrorMessage: async (message) => vscode.window.showErrorMessage(message),
+    showInformationMessage: async (message, ...items) =>
+      vscode.window.showInformationMessage(message, ...items),
+    showWarningMessage: async (message, options, ...items) =>
+      vscode.window.showWarningMessage(message, options, ...items),
+    showProgress: async (title, task) =>
+      vscode.window.withProgress(
+        { location: vscode.ProgressLocation.Notification, title, cancellable: false },
+        () => task(),
+      ),
+    writeClipboard: async (text) => vscode.env.clipboard.writeText(text),
+    delay: (ms) =>
+      new Promise<void>((resolve) => {
+        setTimeout(resolve, ms);
+      }),
+  };
+
+  const handlers = createWalletCommandHandlers({ controller, panel: secretPanel, host });
+  for (const commandId of WALLET_COMMAND_IDS) {
+    context.subscriptions.push(
+      vscode.commands.registerCommand(commandId, () => handlers[commandId]()),
+    );
+  }
+
+  // Window blur is the VS Code analogue of the web app's visibility lock:
+  // close the secret panel, then drop the session. Focus re-reads the record
+  // so an external write is detected before the next command.
+  context.subscriptions.push(
+    vscode.window.onDidChangeWindowState((windowState) => {
+      if (!windowState.focused) {
+        secretPanel.dispose();
+        controller.lock('focus-lost');
+        return;
+      }
+      void controller.handleWindowFocus(true);
+    }),
+  );
+
+  controller.start();
+  void controller.load();
 }
 
 export function deactivate(): void {
-  // VS Code disposes the registrations in `subscriptions`; nothing else is held.
+  // The extension's registrations are disposed by VS Code; the wallet holds
+  // memory-only state (session key, flow secret, timers) that must be dropped
+  // explicitly. VS Code does not guarantee this runs on a crash.
+  if (walletRef !== undefined) {
+    // Terminal: unlike the lock/blur close, deactivation must not leave a
+    // holder that could open another secret panel.
+    walletRef.panel.shutdown();
+    walletRef.controller.dispose();
+    walletRef = undefined;
+  }
 }

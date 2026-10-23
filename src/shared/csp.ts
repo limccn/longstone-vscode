@@ -74,6 +74,57 @@ export function buildContentSecurityPolicy(sources: CspSources): string {
   return directives.map(([name, values]) => `${name} ${values.join(' ')}`).join('; ');
 }
 
+export interface SecretCspSources {
+  /** `webview.cspSource` for the extension. */
+  cspSource: string;
+  /** Per-document nonce placed on the single signed-in `<script>` tag. */
+  nonce: string;
+}
+
+const CSP_FORBIDDEN_CHARS = /[\s;'"]/;
+/** Same shape `renderSecretHtml` accepts: 16-128 base64/hex characters. */
+const CSP_NONCE_TEXT = /^[A-Za-z0-9+/=_-]{16,128}$/;
+
+/**
+ * CSP for the dedicated secret webview (design §7.5).
+ *
+ * Deliberately not the memory-browser policy: there is no `connect-src` at
+ * all, no image or font source, and no data-block or inline exception. The
+ * only loadable assets are the nonce'd script and the packaged stylesheet,
+ * both served through `asWebviewUri` from `cspSource`.
+ *
+ * Inputs are checked so a malformed nonce or source cannot terminate the
+ * directive and inject another one.
+ */
+export function buildSecretCsp(sources: SecretCspSources): string {
+  const { cspSource, nonce } = sources;
+  if (!CSP_NONCE_TEXT.test(nonce)) {
+    throw new Error('secret CSP nonce must be 16-128 base64/hex characters');
+  }
+  if (cspSource === '' || CSP_FORBIDDEN_CHARS.test(cspSource)) {
+    throw new Error('secret CSP source must be non-empty and free of whitespace, quotes and semicolons');
+  }
+
+  const directives: [string, string[]][] = [
+    ['default-src', ["'none'"]],
+    ['script-src', [`'nonce-${nonce}'`]],
+    // Only the packaged stylesheet; no `'unsafe-inline'` and no nonce here.
+    ['style-src', [cspSource]],
+    ['img-src', ["'none'"]],
+    ['font-src', ["'none'"]],
+    ['connect-src', ["'none'"]],
+    ['media-src', ["'none'"]],
+    ['object-src', ["'none'"]],
+    ['frame-src', ["'none'"]],
+    ['frame-ancestors', ["'none'"]],
+    ['worker-src', ["'none'"]],
+    ['base-uri', ["'none'"]],
+    ['form-action', ["'none'"]],
+  ];
+
+  return directives.map(([name, values]) => `${name} ${values.join(' ')}`).join('; ');
+}
+
 /** Meta tag for the policy, safe to interpolate into the HTML head. */
 export function cspMetaTag(policy: string): string {
   if (policy.includes('"')) {

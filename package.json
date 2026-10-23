@@ -1,8 +1,8 @@
 {
   "name": "longstone-vscode",
   "displayName": "Longstone Memory",
-  "description": "Read-only inspector for Longstone agent memories anchored on Base Sepolia, plus an MCP provider that gives Copilot Chat the Longstone memory tools.",
-  "version": "0.1.0",
+  "description": "Read-only Longstone memory browser and MCP provider for Base Sepolia, plus a local encrypted wallet for key management and addresses only (never signs).",
+  "version": "0.2.0",
   "publisher": "limccn",
   "license": "Apache-2.0",
   "private": true,
@@ -23,13 +23,26 @@
     "mcp",
     "memory",
     "agent",
-    "base-sepolia"
+    "base-sepolia",
+    "wallet",
+    "vault",
+    "key-management",
+    "bip39",
+    "ethereum"
   ],
   "main": "./dist/extension.cjs",
   "activationEvents": [
     "onStartupFinished",
     "onCommand:longstone.showMemoryBrowser",
-    "onCommand:longstone.reportKeyPresence"
+    "onCommand:longstone.reportKeyPresence",
+    "onCommand:longstone.wallet.manage",
+    "onCommand:longstone.wallet.create",
+    "onCommand:longstone.wallet.import",
+    "onCommand:longstone.wallet.lock",
+    "onCommand:longstone.wallet.copyAddress",
+    "onCommand:longstone.wallet.exportSecret",
+    "onCommand:longstone.wallet.changePassword",
+    "onCommand:longstone.wallet.reset"
   ],
   "contributes": {
     "mcpServerDefinitionProviders": [
@@ -47,6 +60,46 @@
       {
         "command": "longstone.reportKeyPresence",
         "title": "Longstone: Report Key Presence (boolean only)",
+        "category": "Longstone"
+      },
+      {
+        "command": "longstone.wallet.manage",
+        "title": "Longstone: Manage Wallet",
+        "category": "Longstone"
+      },
+      {
+        "command": "longstone.wallet.create",
+        "title": "Longstone: Create Wallet",
+        "category": "Longstone"
+      },
+      {
+        "command": "longstone.wallet.import",
+        "title": "Longstone: Import Wallet",
+        "category": "Longstone"
+      },
+      {
+        "command": "longstone.wallet.lock",
+        "title": "Longstone: Lock Wallet",
+        "category": "Longstone"
+      },
+      {
+        "command": "longstone.wallet.copyAddress",
+        "title": "Longstone: Copy Wallet Address",
+        "category": "Longstone"
+      },
+      {
+        "command": "longstone.wallet.exportSecret",
+        "title": "Longstone: Export Wallet Secret",
+        "category": "Longstone"
+      },
+      {
+        "command": "longstone.wallet.changePassword",
+        "title": "Longstone: Change Wallet Password",
+        "category": "Longstone"
+      },
+      {
+        "command": "longstone.wallet.reset",
+        "title": "Longstone: Reset Wallet",
         "category": "Longstone"
       }
     ],
@@ -100,6 +153,7 @@
   },
   "dependencies": {
     "@limccn/longstone-surface": "workspace:*",
+    "@limccn/longstone-wallet": "workspace:*",
     "@limccn/menhir-core": "workspace:*",
     "viem": "2.57.7"
   },

@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 /**
  * Assert the packaged file list (`vsce ls --no-dependencies` output) contains
- * the two bundles and no sources, tooling or source maps.
+ * the three bundles, both stylesheets, and no sources, tooling or source maps.
  *
  * Usage:
  *   pnpm exec vsce ls --no-dependencies > vsix-files.txt
@@ -25,7 +25,9 @@ const files = readFileSync(file, 'utf8')
 const required = [
   'dist/extension.cjs',
   'dist/webview.js',
+  'dist/wallet-webview.js',
   'media/webview.css',
+  'media/wallet.css',
   'package.json',
   'README.md',
   'LICENSE',

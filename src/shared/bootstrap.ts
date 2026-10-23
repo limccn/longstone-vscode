@@ -1,10 +1,10 @@
 /**
  * Bootstrap payload parsing.
  *
- * The host sends `{ settings, issues, keyPresence }` over `postMessage`; this
- * module validates it at the webview edge and falls back to safe defaults for
- * anything missing or malformed. It is pure (no DOM, no `vscode`) so the
- * fallback behaviour is covered by plain Node tests.
+ * The host sends `{ settings, issues, keyPresence, walletOwner }` over
+ * `postMessage`; this module validates it at the webview edge and falls back to
+ * safe defaults for anything missing or malformed. It is pure (no DOM, no
+ * `vscode`) so the fallback behaviour is covered by plain Node tests.
  */
 
 import {
@@ -24,13 +24,27 @@ export interface Bootstrap {
   settings: LongstoneSettings;
   issues: SettingsIssue[];
   keyPresence: KeyPresence;
+  /**
+   * Active wallet address while unlocked, otherwise `null`. Ephemeral: it
+   * travels in this message only and is never a setting or persisted state.
+   */
+  walletOwner: string | null;
 }
 
 export const EMPTY_BOOTSTRAP: Bootstrap = {
   settings: { ...DEFAULT_SETTINGS },
   issues: [],
   keyPresence: { keyPresent: false, ownerKeyPresent: false },
+  walletOwner: null,
 };
+
+/** `0x` + 40 hex, case-insensitive digits; no whitespace, no checksum check. */
+const WALLET_OWNER_RE = /^0x[0-9a-fA-F]{40}$/;
+
+/** Anything that is not a well-formed address is treated as absent. */
+function normalizeWalletOwner(raw: unknown): string | null {
+  return typeof raw === 'string' && WALLET_OWNER_RE.test(raw) ? raw : null;
+}
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
@@ -73,5 +87,6 @@ export function parseBootstrap(message: unknown): Bootstrap {
       keyPresent: presence.keyPresent === true,
       ownerKeyPresent: presence.ownerKeyPresent === true,
     },
+    walletOwner: normalizeWalletOwner(message.walletOwner),
   };
 }
