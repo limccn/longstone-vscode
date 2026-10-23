@@ -47,6 +47,8 @@ import {
   setIdleTimeout as setIdleTimeoutOp,
   unlockVault,
   validateVaultPayload,
+  verifyRecordHash,
+  verifyWalletAbsent,
   type AccountSource,
   type Argon2Runner,
   type ChangePasswordResult,
@@ -243,6 +245,10 @@ export interface WalletCore {
   ): Promise<VaultResult<DeleteOutcome>>;
   resetVault(deps: VaultDeps): Promise<VaultResult<null>>;
   hashRecord(value: unknown): string;
+  /** Read-only post-write check; retries once on a transient read failure. */
+  verifyRecordHash(deps: VaultDeps, expectedHash: string): Promise<boolean>;
+  /** Read-only confirmation that both wallet keys are gone. */
+  verifyWalletAbsent(deps: VaultDeps): Promise<boolean>;
 }
 
 /**
@@ -261,6 +267,8 @@ export const DEFAULT_WALLET_CORE: WalletCore = {
   deleteAccount: deleteAccountOp,
   resetVault,
   hashRecord,
+  verifyRecordHash,
+  verifyWalletAbsent,
 };
 
 export interface WalletScheduler {
@@ -1579,38 +1587,25 @@ export class WalletController {
   }
 
   /**
-   * Design §4.2 step 7: a resolved `set` is not proof of persistence. Reads
-   * the primary record back through the adapter and compares its hash with
-   * the one the successful core operation reported. Total by contract: a read
-   * throw, a missing record, a corrupt value or a hash mismatch is `false`,
-   * never an exception. Call only inside a queued task, right after the write
-   * and before the session is adopted (DR-01). Record contents are never
-   * logged or returned.
+   * Design §4.2 step 7: a resolved `set` is not proof of persistence. The
+   * shared core reads the primary record back (retrying once, as §4.2 7.c
+   * requires) and compares its hash with the one the successful operation
+   * reported. Total by contract: a read throw, a missing record, a corrupt
+   * value or a persistent mismatch is `false`, never an exception. Call only
+   * inside a queued task, right after the write and before the session is
+   * adopted (DR-01). Record contents are never logged or returned.
    */
   async #verifyRecordNow(expectedHash: string): Promise<boolean> {
-    try {
-      const read = await this.#storage.get(this.#storage.keys.record);
-      const value = read[this.#storage.keys.record];
-      if (value === undefined) return false;
-      return this.#core.hashRecord(value) === expectedHash;
-    } catch {
-      return false;
-    }
+    return this.#core.verifyRecordHash(this.#vaultDeps, expectedHash);
   }
 
   /**
    * `true` only when both wallet keys are confirmed absent on disk. Used for
-   * a deleted wallet and for reset (design §4.2 step 7); a read failure is
-   * `false` so no caller can claim an unconfirmed removal.
+   * a deleted wallet and for reset (design §4.2 step 7); a persistent read
+   * failure is `false` so no caller can claim an unconfirmed removal.
    */
   async #verifyWalletAbsentNow(): Promise<boolean> {
-    try {
-      const record = await this.#storage.readRaw(this.#storage.keys.record);
-      const pending = await this.#storage.readRaw(this.#storage.keys.pending);
-      return record === null && pending === null;
-    } catch {
-      return false;
-    }
+    return this.#core.verifyWalletAbsent(this.#vaultDeps);
   }
 
   #readRecordHash(): Promise<string | null> {

@@ -282,6 +282,28 @@ describe('WalletController unlock and rate limiting', () => {
     assert.equal(unlocked.ok, true);
   });
 
+  it('keeps the unlock limiter across a lock and clears it on success', async () => {
+    const { controller, clock } = await lockedWallet();
+    for (let attempt = 0; attempt < 5; attempt += 1) {
+      await controller.unlock(`wrong password ${String(attempt)}`);
+    }
+    clock.advance(500);
+    assert.equal(controller.unlockRetryAfterSeconds(), 1);
+
+    controller.lock('explicit');
+    assert.equal(
+      controller.unlockRetryAfterSeconds(),
+      1,
+      'locking must not be a way to reset a lockout',
+    );
+
+    clock.advance(600);
+    assert.equal(controller.unlockRetryAfterSeconds(), 0);
+    const unlocked = await controller.unlock(TEST_PASSWORD);
+    assert.equal(unlocked.ok, true);
+    assert.equal(controller.unlockRetryAfterSeconds(), 0);
+  });
+
   it('returns WALLET_BUSY for a concurrent unlock', async () => {
     const started = deferred();
     const gate = deferred();
@@ -1034,18 +1056,38 @@ describe('WalletController post-success read-back', () => {
     assert.equal(controller.state.status, 'UNLOCKED');
     assert.notEqual(controller.recordHash, before);
     assert.equal(controller.recordHash, hashRecord(recordOf(memento, storage.keys.record)));
-    // The core reads the record for its precondition; the controller adds the
-    // post-success verification read, and neither locks on its own write.
-    assert.ok(recordReads() - readsBefore >= 2);
+    // The core reads the record for its precondition; the controller adds
+    // exactly one post-success verification read, and neither locks on its
+    // own write.
+    assert.equal(recordReads() - readsBefore, 2);
     assert.equal(await controller.pollExternal(), false);
   });
 
-  it('locks when the post-success read-back itself throws', async () => {
+  it('recovers when only the first post-success read-back throws', async () => {
+    const { controller, memento, storage } = await unlockedWallet();
+    const account = firstAccount(controller);
+    const before = controller.recordHash;
+    memento.beforeUpdate = (key) => {
+      if (key === storage.keys.record) {
+        // §4.2 7.c: the first read may be transiently unavailable; the
+        // second read must still confirm the write.
+        memento.failNextGets = { key: storage.keys.record, count: 1 };
+      }
+    };
+
+    const result = await controller.rename(account.id, 'Retried read-back');
+    assert.equal(result.ok, true);
+    assert.equal(controller.state.status, 'UNLOCKED');
+    assert.equal(firstAccount(controller).label, 'Retried read-back');
+    assert.notEqual(controller.recordHash, before);
+  });
+
+  it('locks when both post-success read-backs throw', async () => {
     const { controller, memento, storage } = await unlockedWallet();
     const account = firstAccount(controller);
     memento.beforeUpdate = (key) => {
       if (key === storage.keys.record) {
-        memento.failNextGet = { key: storage.keys.record };
+        memento.failNextGets = { key: storage.keys.record, count: 2 };
       }
     };
 

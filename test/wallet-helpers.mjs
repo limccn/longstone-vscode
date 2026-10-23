@@ -64,6 +64,11 @@ export class FakeMemento {
   resolveNextUpdate = null;
   /** `{ key }`: next `get(key)` throws (a read failure, not corruption). */
   failNextGet = null;
+  /**
+   * `{ key, count }`: the next `count` `get(key)` calls throw. Models a read
+   * failure that survives the controller's retry-once read-back check.
+   */
+  failNextGets = null;
   /** Runs after an injected update failure, before the rejection is returned. */
   afterFailedUpdate = null;
   /** Runs before a successful update is applied. */
@@ -71,6 +76,12 @@ export class FakeMemento {
 
   get(key) {
     this.reads.push(key);
+    const repeated = this.failNextGets;
+    if (repeated !== null && repeated.key === key) {
+      repeated.count -= 1;
+      if (repeated.count <= 0) this.failNextGets = null;
+      throw new Error('simulated read failure');
+    }
     const failure = this.failNextGet;
     if (failure !== null && failure.key === key) {
       this.failNextGet = null;
