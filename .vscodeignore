@@ -1,0 +1,21 @@
+# Build tooling and sources are not needed at runtime: both bundles are
+# self-contained and the webview loads only dist/ + media/.
+.github/**
+src/**
+test/**
+scripts/**
+tsconfig.json
+.vscode/**
+.vscode-test/**
+node_modules/**
+**/*.map
+**/*.ts
+**/*.tsx
+.gitignore
+.eslintrc*
+eslint.config.*
+.prettierrc*
+*.vsix
+pnpm-lock.yaml
+package-lock.json
+vsix-files.txt

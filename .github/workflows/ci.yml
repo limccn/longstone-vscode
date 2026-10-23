@@ -1,0 +1,105 @@
+name: ci
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+# `package.json` depends on `@limccn/longstone-surface` and
+# `@limccn/menhir-core` via `workspace:*`, and this repo is one package of the
+# MemoryOverEth workspace. CI assembles that workspace:
+#   workspace/
+#   ├── pnpm-workspace.yaml
+#   ├── menhir/                         (sibling repo; @limccn/menhir-core)
+#   ├── longstone-ui/                   (sibling repo; longstone-surface)
+#   └── longstone-vscode/               (this repo)
+# The sibling checkouts need a token with read access to those repos.
+
+jobs:
+  verify:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - name: Checkout longstone-vscode
+        uses: actions/checkout@v4
+        with:
+          path: workspace/longstone-vscode
+      - name: Checkout longstone-ui (@limccn/longstone-surface)
+        uses: actions/checkout@v4
+        with:
+          repository: limccn/longstone-ui
+          token: ${{ secrets.LONGSTONE_UI_REPO_TOKEN || github.token }}
+          path: workspace/longstone-ui
+      - name: Checkout menhir (@limccn/menhir-core)
+        uses: actions/checkout@v4
+        with:
+          repository: limccn/menhir
+          token: ${{ secrets.MENHIR_REPO_TOKEN || github.token }}
+          path: workspace/menhir
+      - name: Assemble workspace
+        working-directory: workspace
+        shell: bash
+        run: |
+          printf 'packages:\n  - "menhir/ts"\n  - "longstone-ui/packages/longstone-surface"\n  - "longstone-vscode"\nallowBuilds:\n  "esbuild": true\n  "@vscode/vsce-sign": true\n' > pnpm-workspace.yaml
+          printf '{"name":"ci-workspace","private":true,"packageManager":"pnpm@12.11.2"}\n' > package.json
+
+      - uses: pnpm/action-setup@v4
+        with:
+          package_json_file: workspace/package.json
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+      - run: pnpm install --no-frozen-lockfile
+        working-directory: workspace
+
+      - run: pnpm --filter @limccn/menhir-core build
+        working-directory: workspace
+      - run: pnpm --filter @limccn/longstone-surface build
+        working-directory: workspace
+
+      # The manifest assertions need only package.json, constants and README,
+      # so run them before anything that can fail for a build reason. A missing
+      # provider contribution or an accidental key setting is a packaging
+      # regression, and it must fail loudly.
+      - run: node scripts/assert-manifest.mjs
+        working-directory: workspace/longstone-vscode
+
+      - run: pnpm --dir longstone-vscode typecheck
+        working-directory: workspace
+      - run: pnpm --dir longstone-vscode test
+        working-directory: workspace
+      - run: pnpm --dir longstone-vscode build
+        working-directory: workspace
+
+      # Bundle audit after the build: fail on wallet/signing entry points,
+      # dynamic code execution and key-material assignments.
+      - run: node scripts/audit-bundle.mjs
+        working-directory: workspace/longstone-vscode
+
+      - name: Package the VSIX
+        working-directory: workspace/longstone-vscode
+        # vsce is pinned to 4.0.0 in devDependencies; the assembled
+        # pnpm-workspace.yaml allows @vscode/vsce-sign's postinstall.
+        run: pnpm exec vsce package --no-dependencies --out longstone-vscode.vsix
+
+      - name: Assert the VSIX contains both bundles and no sources
+        working-directory: workspace/longstone-vscode
+        shell: bash
+        run: |
+          pnpm exec vsce ls --no-dependencies > vsix-files.txt
+          cat vsix-files.txt
+          node scripts/assert-vsix.mjs vsix-files.txt
+
+      - name: Upload the VSIX
+        uses: actions/upload-artifact@v4
+        with:
+          name: longstone-vscode-${{ matrix.os }}
+          path: workspace/longstone-vscode/longstone-vscode.vsix
+          if-no-files-found: error

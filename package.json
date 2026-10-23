@@ -1,0 +1,113 @@
+{
+  "name": "longstone-vscode",
+  "displayName": "Longstone Memory",
+  "description": "Read-only inspector for Longstone agent memories anchored on Base Sepolia, plus an MCP provider that gives Copilot Chat the Longstone memory tools.",
+  "version": "0.1.0",
+  "publisher": "limccn",
+  "license": "Apache-2.0",
+  "private": true,
+  "type": "module",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/limccn/longstone-vscode.git"
+  },
+  "engines": {
+    "vscode": "^1.101.0",
+    "node": ">=24"
+  },
+  "categories": [
+    "Other"
+  ],
+  "keywords": [
+    "longstone",
+    "mcp",
+    "memory",
+    "agent",
+    "base-sepolia"
+  ],
+  "main": "./dist/extension.cjs",
+  "activationEvents": [
+    "onStartupFinished",
+    "onCommand:longstone.showMemoryBrowser",
+    "onCommand:longstone.reportKeyPresence"
+  ],
+  "contributes": {
+    "mcpServerDefinitionProviders": [
+      {
+        "id": "longstone",
+        "label": "Longstone memory (read-only by default)"
+      }
+    ],
+    "commands": [
+      {
+        "command": "longstone.showMemoryBrowser",
+        "title": "Longstone: Show Memory Browser",
+        "category": "Longstone"
+      },
+      {
+        "command": "longstone.reportKeyPresence",
+        "title": "Longstone: Report Key Presence (boolean only)",
+        "category": "Longstone"
+      }
+    ],
+    "configuration": {
+      "title": "Longstone",
+      "properties": {
+        "longstone.rpcUrl": {
+          "type": "string",
+          "default": "https://sepolia.base.org",
+          "markdownDescription": "Base Sepolia JSON-RPC endpoint. `https://` is required; plain `http://` is accepted only for loopback hosts (localhost, 127.0.0.1, ::1).",
+          "editPresentation": "singleLineText"
+        },
+        "longstone.registryAddress": {
+          "type": "string",
+          "default": "0xC85ed11d3065739F1829A114e420584bEC3FDFEF",
+          "pattern": "^0x[0-9a-fA-F]{40}$",
+          "patternErrorMessage": "Must be 0x followed by 40 hex characters.",
+          "markdownDescription": "MemoryRegistry contract address. The registry is immutable: an upgrade is a new address, never a proxy.",
+          "editPresentation": "singleLineText"
+        },
+        "longstone.ipfsGateway": {
+          "type": "string",
+          "default": "https://gateway.pinata.cloud/ipfs",
+          "markdownDescription": "IPFS gateway used to fetch content bytes for verification. `https://` is required; loopback `http://` is allowed for local development.",
+          "editPresentation": "singleLineText"
+        },
+        "longstone.hisaishiUrl": {
+          "type": "string",
+          "default": "",
+          "markdownDescription": "Optional Longstone gateway (hisaishi) base URL. When set, content is fetched by digest through it; direct IPFS retrieval by derived CID stays the fallback. `https://` is required; loopback `http://` is allowed. Leave empty to use IPFS only.",
+          "editPresentation": "singleLineText"
+        },
+        "longstone.allowWriteTools": {
+          "type": "boolean",
+          "default": false,
+          "scope": "application",
+          "markdownDescription": "Expose the Longstone MCP **write** tools (`memory_put`, `memory_retract`, `memory_acl`) to MCP hosts. Off by default: the provider then registers `memory_get`, `memory_verify` and `memory_stage_status` only. This is a user (application) setting, so a workspace cannot enable write mode. Write tools still need `LONGSTONE_KEY` in the VS Code environment; this extension never stores keys."
+        }
+      }
+    }
+  },
+  "scripts": {
+    "build": "node scripts/build.mjs",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "node --test test/*.test.mjs",
+    "assert:manifest": "node scripts/assert-manifest.mjs",
+    "audit:bundle": "node scripts/audit-bundle.mjs",
+    "package": "node scripts/build.mjs && vsce package --no-dependencies",
+    "vscode:prepublish": "node scripts/build.mjs",
+    "verify:all": "pnpm run typecheck && pnpm test && pnpm run build && pnpm run assert:manifest && pnpm run audit:bundle"
+  },
+  "dependencies": {
+    "@limccn/longstone-surface": "workspace:*",
+    "@limccn/menhir-core": "workspace:*",
+    "viem": "2.57.7"
+  },
+  "devDependencies": {
+    "@types/node": "26.6.5",
+    "@types/vscode": "1.101.0",
+    "esbuild": "0.28.2",
+    "typescript": "7.0.2",
+    "@vscode/vsce": "4.0.0"
+  }
+}
