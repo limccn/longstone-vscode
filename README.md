@@ -29,6 +29,17 @@ setting).
 > an on-chain memory — only a commitment hash resolved against registry state
 > is.
 
+## What changed in 0.2.2
+
+- **Webview CSP source lists.** VS Code 1.143 reports `webview.cspSource` as
+  `'self' https://*.vscode-cdn.net`, not one origin. Both the memory browser
+  and the wallet secret panel now accept the single-origin, wildcard and
+  source-list shapes, while still refusing a malformed list rather than
+  sanitizing it. This fixes the "webview asset outside cspSource" failure that
+  prevented the panels from rendering on 1.143.
+- **No contract change.** Wallet storage, MCP provider behaviour and settings
+  are unchanged from 0.2.1.
+
 ## What changed in 0.2.1
 
 - **No runtime download.** The MCP provider no longer performs a runtime npm
@@ -64,7 +75,7 @@ it:
 ```bash
 corepack pnpm install                 # from the workspace root
 pnpm --dir longstone-vscode package   # builds + runs the pinned vsce 4.0.0
-code --install-extension longstone-vscode-0.2.1.vsix
+code --install-extension longstone-vscode-0.2.2.vsix
 ```
 
 In VS Code: **Extensions → … → Install from VSIX…** does the same thing.

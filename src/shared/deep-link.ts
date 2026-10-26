@@ -83,34 +83,80 @@ export function isAllowedExternalUrl(candidate: string): boolean {
 }
 
 /**
+ * Parse `webview.cspSource` into its source expressions.
+ *
+ * VS Code has shipped three shapes:
+ * - an exact origin (`https://file+.vscode-resource.vscode-cdn.net`);
+ * - a wildcard origin (`https://*.vscode-cdn.net`);
+ * - a CSP source list (`'self' https://*.vscode-cdn.net`, VS Code 1.143+).
+ *
+ * Only `'self'` and http(s)/vscode-webview URLs are accepted. The list is
+ * rebuilt from these tokens, so `;`, a quote or a newline cannot terminate a
+ * directive or inject another one. Returns `null` when any token is invalid.
+ */
+export function parseCspSourceList(cspSource: string): string[] | null {
+  const tokens = cspSource.trim().split(/\s+/).filter((token) => token !== '');
+  if (tokens.length === 0) return null;
+  const parsed: string[] = [];
+  for (const token of tokens) {
+    if (token === "'self'") {
+      parsed.push(token);
+      continue;
+    }
+    if (/[;,'"]/.test(token)) return null;
+    let url: URL;
+    try {
+      url = new URL(token);
+    } catch {
+      return null;
+    }
+    if (url.protocol !== 'https:' && url.protocol !== 'http:' && url.protocol !== 'vscode-webview:') {
+      return null;
+    }
+    if (url.username !== '' || url.password !== '' || url.search !== '' || url.hash !== '') {
+      return null;
+    }
+    parsed.push(token);
+  }
+  return parsed;
+}
+
+/**
  * Check that an `asWebviewUri` result is covered by `webview.cspSource`.
  *
- * `cspSource` has two shapes across VS Code versions:
- * - an exact origin (`vscode-webview://<uuid>`), where the URI must share it;
- * - a wildcard origin (`https://*.vscode-cdn.net`), where the URI host must
- *   end with the wildcard's suffix. Comparing the literal host would reject
- *   every legitimate asset in that case.
+ * `cspSource` may be an exact origin, a wildcard origin, or a whitespace-
+ * separated source list (VS Code 1.143+: `'self' https://*.vscode-cdn.net`).
+ * A wildcard matches any subdomain, but never the bare suffix itself. `'self'`
+ * is skipped: without the document origin it cannot be checked, and every
+ * VS Code webview that serves an asset also lists a concrete source.
  */
 export function isUriInsideCspSource(uri: string, cspSource: string): boolean {
   if (cspSource === '' || uri === '') return false;
-  let source: URL;
-  try {
-    source = new URL(cspSource);
-  } catch {
-    return false;
-  }
+  const sources = parseCspSourceList(cspSource);
+  if (sources === null) return false;
   let target: URL;
   try {
     target = new URL(uri);
   } catch {
     return false;
   }
-  if (target.protocol !== source.protocol) return false;
-  const sourceHost = source.host.toLowerCase();
   const targetHost = target.host.toLowerCase();
-  if (sourceHost.startsWith('*.')) {
-    const suffix = sourceHost.slice(1); // keep the leading dot
-    return targetHost.endsWith(suffix) && targetHost.length > suffix.length;
+  for (const source of sources) {
+    if (source === "'self'") continue;
+    let parsed: URL;
+    try {
+      parsed = new URL(source);
+    } catch {
+      continue;
+    }
+    if (target.protocol !== parsed.protocol) continue;
+    const sourceHost = parsed.host.toLowerCase();
+    if (sourceHost.startsWith('*.')) {
+      const suffix = sourceHost.slice(1); // keep the leading dot
+      if (targetHost.endsWith(suffix) && targetHost.length > suffix.length) return true;
+    } else if (targetHost === sourceHost) {
+      return true;
+    }
   }
-  return targetHost === sourceHost;
+  return false;
 }

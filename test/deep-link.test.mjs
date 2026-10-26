@@ -117,3 +117,24 @@ test('a vscode-webview origin matches exactly', () => {
   assert.equal(isUriInsideCspSource(`${origin}/dist/webview.js`, origin), true);
   assert.equal(isUriInsideCspSource('vscode-webview://other/dist/webview.js', origin), false);
 });
+
+test('a CSP source list from VS Code 1.143 is accepted', () => {
+  // 1.143 returns `'self' https://*.vscode-cdn.net` for a desktop webview.
+  const source = "'self' https://*.vscode-cdn.net";
+  assert.equal(
+    isUriInsideCspSource(
+      'https://file%2B.vscode-resource.vscode-cdn.net/c%3A/ext/dist/webview.js',
+      source,
+    ),
+    true,
+  );
+  assert.equal(isUriInsideCspSource('https://evil.example.com/webview.js', source), false);
+  // A malformed list is rejected, not partially trusted.
+  assert.equal(
+    isUriInsideCspSource(
+      'https://file+.vscode-resource.vscode-cdn.net/x',
+      "'self' https://x; script-src *",
+    ),
+    false,
+  );
+});

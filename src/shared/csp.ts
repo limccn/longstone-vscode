@@ -8,6 +8,7 @@
  * hisaishi origins (PS-7's spirit applied to VS Code: no blanket origins).
  */
 
+import { parseCspSourceList } from './deep-link.ts';
 import { connectOriginsFor, type LongstoneSettings } from './settings.ts';
 
 /** 16 random bytes, hex encoded — enough for a per-load CSP nonce. */
@@ -46,6 +47,13 @@ export interface CspSources {
  *   rather than relying on `default-src` alone for the dangerous ones.
  */
 export function buildContentSecurityPolicy(sources: CspSources): string {
+  // `webview.cspSource` can be a single origin or a source list; rebuild it
+  // from validated tokens so it cannot terminate a directive.
+  const parsedSource = parseCspSourceList(sources.cspSource);
+  if (parsedSource === null) {
+    throw new Error('CSP source must be a non-empty list of self or http(s)/vscode-webview origins');
+  }
+  const cspSource = parsedSource.join(' ');
   const connect = [
     ...connectOriginsFor(sources.settings),
     ...(sources.extraConnectOrigins ?? []),
@@ -59,9 +67,9 @@ export function buildContentSecurityPolicy(sources: CspSources): string {
   const directives: [string, string[]][] = [
     ['default-src', ["'none'"]],
     ['script-src', [`'nonce-${sources.nonce}'`]],
-    ['style-src', [sources.cspSource]],
-    ['img-src', [sources.cspSource, 'data:']],
-    ['font-src', [sources.cspSource]],
+    ['style-src', [cspSource]],
+    ['img-src', [cspSource, 'data:']],
+    ['font-src', [cspSource]],
     ['connect-src', connect],
     ['media-src', ["'none'"]],
     ['object-src', ["'none'"]],
@@ -81,8 +89,6 @@ export interface SecretCspSources {
   nonce: string;
 }
 
-const CSP_FORBIDDEN_CHARS = /[\s;'"]/;
-/** Same shape `renderSecretHtml` accepts: 16-128 base64/hex characters. */
 const CSP_NONCE_TEXT = /^[A-Za-z0-9+/=_-]{16,128}$/;
 
 /**
@@ -101,15 +107,21 @@ export function buildSecretCsp(sources: SecretCspSources): string {
   if (!CSP_NONCE_TEXT.test(nonce)) {
     throw new Error('secret CSP nonce must be 16-128 base64/hex characters');
   }
-  if (cspSource === '' || CSP_FORBIDDEN_CHARS.test(cspSource)) {
-    throw new Error('secret CSP source must be non-empty and free of whitespace, quotes and semicolons');
+  // Accept both the single-origin and source-list shapes VS Code uses; the
+  // rebuilt list prevents directive injection through whitespace or `;`.
+  const parsedSource = parseCspSourceList(cspSource);
+  if (parsedSource === null) {
+    throw new Error(
+      'secret CSP source must be a non-empty list of self or http(s)/vscode-webview origins',
+    );
   }
+  const sourceText = parsedSource.join(' ');
 
   const directives: [string, string[]][] = [
     ['default-src', ["'none'"]],
     ['script-src', [`'nonce-${nonce}'`]],
     // Only the packaged stylesheet; no `'unsafe-inline'` and no nonce here.
-    ['style-src', [cspSource]],
+    ['style-src', [sourceText]],
     ['img-src', ["'none'"]],
     ['font-src', ["'none'"]],
     ['connect-src', ["'none'"]],

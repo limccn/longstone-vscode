@@ -111,6 +111,13 @@ test('secret CSP rejects a malformed nonce or source instead of sanitizing it', 
   );
 });
 
+test('secret CSP accepts a CSP source list from current VS Code', () => {
+  const source = "'self' https://*.vscode-cdn.net";
+  const policy = buildSecretCsp({ cspSource: source, nonce: NONCE });
+  assert.equal(directive(policy, 'style-src'), `style-src ${source}`);
+  assert.doesNotMatch(policy, /unsafe-inline|unsafe-eval/);
+});
+
 test('HTML embeds the secret CSP and exactly one nonce-gated script', () => {
   const html = renderHtml();
 

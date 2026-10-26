@@ -102,6 +102,30 @@ test('the meta tag is a well-formed, quote-free attribute', () => {
   assert.throws(() => cspMetaTag(`default-src "x"`), /double quotes/);
 });
 
+test('the policy accepts a CSP source list from current VS Code', () => {
+  const source = "'self' https://*.vscode-cdn.net";
+  const policy = buildContentSecurityPolicy({
+    cspSource: source,
+    nonce: 'deadbeef',
+    settings: DEFAULT_SETTINGS,
+  });
+  assert.equal(directive(policy, 'style-src'), `style-src ${source}`);
+  assert.equal(directive(policy, 'img-src'), `img-src ${source} data:`);
+  assert.equal(directive(policy, 'font-src'), `font-src ${source}`);
+});
+
+test('an invalid CSP source is refused', () => {
+  assert.throws(
+    () =>
+      buildContentSecurityPolicy({
+        cspSource: "'self' https://x; script-src *",
+        nonce: 'deadbeef',
+        settings: DEFAULT_SETTINGS,
+      }),
+    /CSP source/,
+  );
+});
+
 test('the policy names no remote hosts beyond the configured endpoints', () => {
   const policy = policyFor();
   // The webview CSP source itself is a vscode-cdn.net URL, so match whole
