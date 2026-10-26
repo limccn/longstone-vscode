@@ -5,6 +5,8 @@ src/**
 test/**
 scripts/**
 docs/**
+# Only the 128x128 store icon ships; the large source PNG is design input.
+media/icon.png
 tsconfig.json
 .vscode/**
 .vscode-test/**

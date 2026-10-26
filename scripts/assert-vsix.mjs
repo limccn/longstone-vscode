@@ -28,12 +28,13 @@ const required = [
   'dist/wallet-webview.js',
   'media/webview.css',
   'media/wallet.css',
+  'media/icon128x128.png',
   'package.json',
   'README.md',
   'LICENSE',
 ];
 const forbiddenPrefixes = ['src/', 'test/', 'scripts/', 'node_modules/', '.github/'];
-const forbiddenExact = ['tsconfig.json', '.vscodeignore', '.gitignore'];
+const forbiddenExact = ['tsconfig.json', '.vscodeignore', '.gitignore', 'media/icon.png'];
 
 const failures = [];
 for (const path of required) {

@@ -4,6 +4,7 @@
   "description": "Read-only Longstone memory browser and MCP provider for Base Sepolia, plus a local encrypted wallet for key management and addresses only (never signs).",
   "version": "0.2.0",
   "publisher": "limccn",
+  "icon": "media/icon128x128.png",
   "license": "Apache-2.0",
   "private": true,
   "type": "module",

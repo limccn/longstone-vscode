@@ -53,6 +53,10 @@ check('the wallet release is version 0.2.0', () => {
   assert.equal(manifest.version, '0.2.0');
 });
 
+check('the store icon is the packaged 128x128 png', () => {
+  assert.equal(manifest.icon, 'media/icon128x128.png');
+});
+
 check('main points at the built extension bundle', () => {
   assert.equal(manifest.main, './dist/extension.cjs');
 });
@@ -173,9 +177,10 @@ check('.vscodeignore excludes sources and tooling from the VSIX', () => {
   assert.match(vscodeIgnore, /^test\/\*\*$/m);
   assert.match(vscodeIgnore, /^scripts\/\*\*$/m);
   assert.match(vscodeIgnore, /^node_modules\/\*\*$/m);
-  // dist/ and media/ must NOT be ignored: the webview loads them.
+  // dist/ and media/ must NOT be ignored wholesale: the webview loads them.
+  // A specific media file may be excluded (the large icon source is one).
   assert.doesNotMatch(vscodeIgnore, /^dist\//m);
-  assert.doesNotMatch(vscodeIgnore, /^media\//m);
+  assert.doesNotMatch(vscodeIgnore, /^media(\/\*\*)?\/?$/m);
 });
 
 if (failures.length > 0) {
