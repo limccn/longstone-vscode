@@ -18,6 +18,9 @@ export const SETTING_KEYS = {
   ipfsGateway: 'longstone.ipfsGateway',
   hisaishiUrl: 'longstone.hisaishiUrl',
   allowWriteTools: 'longstone.allowWriteTools',
+  // Host-only: the CLI launch target. Deliberately absent from
+  // `LongstoneSettings`/`DEFAULT_SETTINGS`, so the webview never reads it.
+  cliPath: 'longstone.cliPath',
 } as const;
 
 export interface LongstoneSettings {

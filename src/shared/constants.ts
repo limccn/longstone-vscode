@@ -55,14 +55,15 @@ export const WALLET_STATUS_TOOLTIP_NO_VAULT = 'Set up a local encrypted wallet';
 export const WALLET_STATUS_TOOLTIP_LOCKED = 'Click to unlock';
 export const WALLET_STATUS_TOOLTIP_UNLOCKED = 'click to manage';
 
-/** The CLI package the provider launches. Exact pin, never a range (PS-5). */
+/** The CLI package users install globally; the provider launches its command. */
 export const LONGSTONE_PACKAGE = '@limccn/longstone';
 
 /**
- * Exact version the provider launches and `resolveMcpServerDefinition`
- * verifies. `npx -y` does not consult a lockfile, so the pin is the
- * supply-chain control; bumping it is a deliberate change, mirrored in the
- * README and in the manifest assertion script.
+ * Exact version the provider documents and the README tells users to install.
+ * The extension launches the user-installed CLI (`longstone serve`) and never
+ * fetches a package at run time, so this pin is the version contract; bumping
+ * it is a deliberate change, mirrored in the README and in the manifest
+ * assertion script.
  */
 export const LONGSTONE_CLI_VERSION = '0.1.1';
 

@@ -3,6 +3,7 @@ import test from 'node:test';
 
 import {
   DEFAULT_SETTINGS,
+  SETTING_KEYS,
   connectOriginsFor,
   validateEndpointUrl,
   validateRegistryAddress,
@@ -166,6 +167,13 @@ test('no key setting exists in the schema defaults', () => {
   for (const key of Object.keys(DEFAULT_SETTINGS)) {
     assert.doesNotMatch(key, /key|secret|mnemonic|private/i, key);
   }
+});
+
+test('the CLI path is a host-only key, not a webview setting', () => {
+  // Host-only by design: the webview consumes LongstoneSettings, which must
+  // never grow a field that names an executable.
+  assert.equal(SETTING_KEYS.cliPath, 'longstone.cliPath');
+  assert.equal(Object.hasOwn(DEFAULT_SETTINGS, 'cliPath'), false);
 });
 
 test('external-link allowlist and deep-link bases are fixed https origins', () => {

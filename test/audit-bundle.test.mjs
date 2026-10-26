@@ -70,6 +70,9 @@ test('clean bundles pass with allowed viem/noble internals and the owner-key nul
 
 test('each forbidden entry point fails the audit in the memory bundle', async () => {
   const cases = [
+    ['node:child_process', 'require("node:child_process");'],
+    ['child_process', 'var cp = require("child_process");'],
+    ['npx', 'var command = "npx";'],
     ['window.ethereum', 'var x = window.ethereum;'],
     ['createWalletClient', 'createWalletClient();'],
     ['privateKeyToAccount', 'privateKeyToAccount("0x");'],

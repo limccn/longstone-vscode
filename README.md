@@ -3,8 +3,9 @@
 A VS Code extension with three capabilities:
 
 1. **An MCP server provider.** Copilot Chat (or any MCP host in VS Code) gains
-   the Longstone memory tools with no JSON to write. The provider starts
-   `npx -y @limccn/longstone@0.1.1 serve` and, by default, sets
+   the Longstone memory tools with no JSON to write. After a one-time global
+   install (`npm install -g @limccn/longstone@0.1.1`), the provider starts the
+   installed `longstone serve` and, by default, sets
    `LONGSTONE_MCP_READ_ONLY=1`, so only `memory_get`, `memory_verify` and
    `memory_stage_status` are registered.
 2. **A memory browser panel.** Timeline, commitment detail and verification,
@@ -28,6 +29,18 @@ setting).
 > an on-chain memory — only a commitment hash resolved against registry state
 > is.
 
+## What changed in 0.2.1
+
+- **No runtime download.** The MCP provider no longer performs a runtime npm
+  download. Install `@limccn/longstone@0.1.1` globally once and the provider
+  starts the installed `longstone serve`; the extension has no process
+  spawning or download path.
+- **`longstone.cliPath`.** New application-scoped setting (default
+  `longstone`) for an absolute CLI path when the binary is not on `PATH`. A
+  workspace cannot override it.
+- **Three bundles**, `dist/extension.cjs`, `dist/webview.js` and
+  `dist/wallet-webview.js`, packaged as `longstone-vscode-0.2.1.vsix`.
+
 ## What changed in 0.2.0
 
 - **Local encrypted wallet.** Create or import Base Sepolia EOAs, protect them
@@ -40,42 +53,40 @@ setting).
 - **Temporary owner default.** While the wallet is unlocked, the memory
   browser defaults its owner filter to the active address. Locking clears the
   wallet-sourced value; a value you typed is kept. No setting is written.
-- **Three bundles**, `dist/extension.cjs`, `dist/webview.js` and
-  `dist/wallet-webview.js`, packaged as `longstone-vscode-0.2.0.vsix`.
 
 ---
 
-## Install (sideload)
+## Install
 
-Marketplace/Open VSX publishing is **not** part of v1. Build a VSIX and install
+Install from the Marketplace or Open VSX listing, or build a VSIX and sideload
 it:
 
 ```bash
 corepack pnpm install                 # from the workspace root
 pnpm --dir longstone-vscode package   # builds + runs the pinned vsce 4.0.0
-code --install-extension longstone-vscode-0.2.0.vsix
+code --install-extension longstone-vscode-0.2.1.vsix
 ```
 
 In VS Code: **Extensions → … → Install from VSIX…** does the same thing.
 
 Prerequisites:
 
-- Node.js **>= 24** on `PATH` (the pinned CLI declares the same engine).
-- `npx` available. The first server start downloads and caches
-  `@limccn/longstone@0.1.1`; `resolveMcpServerDefinition` only resolves from
-  the local npm cache (`npx --no-install`), so run this once in a terminal if
-  the extension reports that the CLI is missing:
+- Node.js **>= 24** on `PATH` (the CLI declares the same engine).
+- The Longstone CLI, installed globally once:
 
   ```bash
-  npx -y @limccn/longstone@0.1.1 --version
+  npm install -g @limccn/longstone@0.1.1
   ```
+
+  The provider launches the installed `longstone serve`. If `longstone` is not
+  on `PATH`, set `longstone.cliPath` to the binary's full path.
 
 ## The MCP provider
 
 | | |
 |---|---|
 | Provider id | `longstone` |
-| Command | `npx -y @limccn/longstone@0.1.1 serve` |
+| Command | `longstone serve` (or the `longstone.cliPath` value) |
 | Tool surface (default) | `memory_get`, `memory_verify`, `memory_stage_status` |
 | Tool surface (write mode) | adds `memory_put`, `memory_retract`, `memory_acl` |
 | Server env | `LONGSTONE_MCP_READ_ONLY=1` (default) or `=0` (write mode) |
@@ -98,11 +109,12 @@ Prerequisites:
   words and private keys are never injected into the MCP server environment,
   and unlocking or locking the wallet does not change the server definition.
   `LONGSTONE_KEY` remains the only signing-key source for the MCP server.
-- **Resolution is validated.** Before a server starts,
-  `resolveMcpServerDefinition` runs `npx --no-install @limccn/longstone@0.1.1
-  --version`; a missing package or a mismatched version surfaces an error
-  naming the package and the fix instead of a server that fails on first use.
-  The check is cached for the session.
+- **Resolution is a filesystem check.** Before a server starts,
+  `resolveMcpServerDefinition` looks for the configured command on `PATH`
+  (Windows `PATHEXT` included) or at the absolute `longstone.cliPath`. It
+  never downloads, installs, executes, or spawns anything. When the CLI is
+  missing it surfaces `npm install -g @limccn/longstone@0.1.1` and the
+  `longstone.cliPath` hint instead of starting a server that cannot run.
 - **No duplicate tools.** The extension never calls `vscode.lm.registerTool`:
   MCP already exposes the tools, and a second registration would drift.
 
@@ -178,6 +190,7 @@ refused.
 | `longstone.ipfsGateway` | `https://gateway.pinata.cloud/ipfs` | Content fetch for verification |
 | `longstone.hisaishiUrl` | empty | Optional gateway; empty means IPFS only |
 | `longstone.allowWriteTools` | `false` | Expose MCP write tools |
+| `longstone.cliPath` | `longstone` | Installed CLI command or absolute path (application-scoped) |
 
 **There is no key setting, by design.** Settings are not a secret channel.
 
@@ -271,7 +284,7 @@ read-back/async epochs, protocol, secret HTML/CSP, commands, status bar,
 password input, owner filter and the design §12.3 source scans — all without
 launching VS Code.
 `scripts/assert-manifest.mjs` asserts the provider contribution, all ten
-commands and their activation events, the five configuration keys, the
+commands and their activation events, the six configuration keys, the
 absence of any key or wallet setting, and the README's wallet claims.
 
 Press `F5` in the repo root to launch an Extension Development Host after
@@ -281,8 +294,8 @@ Press `F5` in the repo root to launch an Extension Development Host after
 
 Deliberately out of scope for this release:
 
-- **Marketplace and Open VSX publishing** (with signing and the listing
-  assets).
+- **Listing assets** beyond the packaged README and icon (screenshots,
+  gallery banner, store copy).
 - **In-editor writes**: retract/ACL through the extension, which would need a
   signing path and would end the "no key channel" property.
 - **Wallet connector / dApp integration** in the memory browser webview

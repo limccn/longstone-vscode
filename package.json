@@ -1,8 +1,8 @@
 {
   "name": "longstone-vscode",
   "displayName": "Longstone Memory",
-  "description": "Read-only Longstone memory browser and MCP provider for Base Sepolia, plus a local encrypted wallet for key management and addresses only (never signs).",
-  "version": "0.2.0",
+  "description": "Read-only Longstone memory browser and MCP provider for Base Sepolia, with a local encrypted account store that never signs.",
+  "version": "0.2.1",
   "publisher": "limccn",
   "icon": "media/icon128x128.png",
   "license": "Apache-2.0",
@@ -24,12 +24,7 @@
     "mcp",
     "memory",
     "agent",
-    "base-sepolia",
-    "wallet",
-    "vault",
-    "key-management",
-    "bip39",
-    "ethereum"
+    "base-sepolia"
   ],
   "main": "./dist/extension.cjs",
   "activationEvents": [
@@ -138,6 +133,12 @@
           "default": false,
           "scope": "application",
           "markdownDescription": "Expose the Longstone MCP **write** tools (`memory_put`, `memory_retract`, `memory_acl`) to MCP hosts. Off by default: the provider then registers `memory_get`, `memory_verify` and `memory_stage_status` only. This is a user (application) setting, so a workspace cannot enable write mode. Write tools still need `LONGSTONE_KEY` in the VS Code environment; this extension never stores keys."
+        },
+        "longstone.cliPath": {
+          "type": "string",
+          "default": "longstone",
+          "scope": "application",
+          "markdownDescription": "Path to the installed `@limccn/longstone` CLI (global install). Defaults to `longstone` on PATH; set an absolute path if it is not on PATH."
         }
       }
     }

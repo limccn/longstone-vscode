@@ -49,8 +49,8 @@ const EXPECTED_COMMANDS = [
   'longstone.wallet.reset',
 ];
 
-check('the wallet release is version 0.2.0', () => {
-  assert.equal(manifest.version, '0.2.0');
+check('the store release is version 0.2.1', () => {
+  assert.equal(manifest.version, '0.2.1');
 });
 
 check('the store icon is the packaged 128x128 png', () => {
@@ -103,9 +103,10 @@ check('no menus or keybindings are contributed', () => {
   assert.equal(contributes.keybindings, undefined, 'the wallet ships no keybindings');
 });
 
-check('exactly the four endpoint settings and the write switch are contributed', () => {
+check('exactly the four endpoint settings, the write switch and the CLI path are contributed', () => {
   assert.deepEqual(Object.keys(properties).sort(), [
     'longstone.allowWriteTools',
+    'longstone.cliPath',
     'longstone.hisaishiUrl',
     'longstone.ipfsGateway',
     'longstone.registryAddress',
@@ -127,6 +128,14 @@ check('the registry address has a shape pattern', () => {
 
 check('write mode is application-scoped, so a workspace cannot enable it', () => {
   assert.equal(properties['longstone.allowWriteTools'].scope, 'application');
+});
+
+check('the CLI path defaults to longstone and is application-scoped', () => {
+  const cliPath = properties['longstone.cliPath'];
+  assert.ok(cliPath, 'longstone.cliPath is missing');
+  assert.equal(cliPath.type, 'string');
+  assert.equal(cliPath.default, 'longstone');
+  assert.equal(cliPath.scope, 'application');
 });
 
 check('no configuration property is a key channel', () => {
@@ -152,6 +161,13 @@ check('the pinned CLI version in constants.ts is an exact semver', () => {
 check('the provider pins the same version the README documents', () => {
   const match = /LONGSTONE_CLI_VERSION\s*=\s*'([^']+)'/.exec(constants);
   assert.ok(readme.includes(`@limccn/longstone@${match[1]}`), `README must name @limccn/longstone@${match[1]}`);
+});
+
+check('README documents the global CLI install and no runtime download', () => {
+  assert.doesNotMatch(readme, /\bnpx\b/, 'README must not mention npx');
+  assert.match(readme, /npm install -g @limccn\/longstone@0\.1\.1/);
+  assert.match(readme, /longstone\.cliPath/);
+  assert.match(readme, /longstone serve/);
 });
 
 check('README documents read-only default, write setting and tests', () => {

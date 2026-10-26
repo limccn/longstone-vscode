@@ -10,6 +10,8 @@
  * and a second registration would duplicate them with a different schema.
  */
 
+import { existsSync } from 'node:fs';
+
 import * as vscode from 'vscode';
 
 import {
@@ -23,8 +25,12 @@ import {
   WALLET_STATUS_PRIORITY,
 } from '../shared/constants.ts';
 import { SETTINGS_SECTION, SETTING_KEYS } from '../shared/settings.ts';
-import { runCliProbe } from './cli-probe.ts';
-import { buildServerDefinition, keyPresence, type ProviderServer } from './mcp-provider.ts';
+import {
+  buildServerDefinition,
+  keyPresence,
+  resolveCliCommand,
+  type ProviderServer,
+} from './mcp-provider.ts';
 import {
   WALLET_COMMAND_IDS,
   createWalletCommandHandlers,
@@ -37,7 +43,6 @@ import { createSecretPanel, type SecretPanel } from './wallet/secret-panel.ts';
 import { createWalletStatusBar, type WalletStatusState } from './wallet/status-bar.ts';
 import { MemoryBrowserPanel } from './webview-panel.ts';
 
-let probeCache: { result: Awaited<ReturnType<typeof runCliProbe>> } | undefined;
 let panelRef: MemoryBrowserPanel | undefined;
 let walletRef: { controller: WalletController; panel: SecretPanel } | undefined;
 
@@ -54,6 +59,13 @@ function readAllowWriteTools(): boolean {
   );
 }
 
+function readCliPath(): string {
+  const value = vscode.workspace
+    .getConfiguration(SETTINGS_SECTION)
+    .get<unknown>('cliPath', 'longstone');
+  return typeof value === 'string' && value.trim() !== '' ? value.trim() : 'longstone';
+}
+
 function readRawSettings(): Record<string, unknown> {
   const config = vscode.workspace.getConfiguration(SETTINGS_SECTION);
   const raw: Record<string, unknown> = {};
@@ -67,24 +79,6 @@ function readRawSettings(): Record<string, unknown> {
 
 function currentKeyPresence(): { keyPresent: boolean; ownerKeyPresent: boolean } {
   return keyPresence(process.env);
-}
-
-async function resolveValidated(): Promise<ProviderServer | undefined> {
-  const result = probeCache?.result ?? (await runCliProbe());
-  if (result.ok) {
-    // Cache successes only: a transient failure is retried on the next start.
-    probeCache = { result };
-  }
-  if (!result.ok) {
-    log(`MCP server resolution failed: ${result.message ?? 'unknown error'}`);
-    void vscode.window.showErrorMessage(
-      `Longstone: ${result.message ?? 'the MCP server command could not be resolved.'}`,
-    );
-    // Returning undefined tells VS Code not to start a server that cannot run,
-    // instead of spawning a process that fails on the first request.
-    return undefined;
-  }
-  return buildServerDefinition({ allowWriteTools: readAllowWriteTools() });
 }
 
 function toVsCodeDefinition(server: ProviderServer): vscode.McpStdioServerDefinition {
@@ -108,13 +102,35 @@ export function activate(context: vscode.ExtensionContext): void {
   const provider: vscode.McpServerDefinitionProvider<vscode.McpStdioServerDefinition> = {
     onDidChangeMcpServerDefinitions: definitionsChanged.event,
     provideMcpServerDefinitions: () => [
-      toVsCodeDefinition(buildServerDefinition({ allowWriteTools: readAllowWriteTools() })),
+      toVsCodeDefinition(
+        buildServerDefinition({
+          allowWriteTools: readAllowWriteTools(),
+          cliPath: readCliPath(),
+        }),
+      ),
     ],
     resolveMcpServerDefinition: async (server) => {
-      // Rebuild at resolve time so the response reflects the current setting,
-      // even if the user changed it after the list was provided.
-      const validated = await resolveValidated();
-      if (validated === undefined) return undefined;
+      // Rebuild at resolve time so the response reflects the current settings,
+      // even if the user changed them after the list was provided. The CLI
+      // lookup is filesystem-only: VS Code launches the process, not us.
+      const cliPath = readCliPath();
+      const result = resolveCliCommand({
+        command: cliPath,
+        platform: process.platform,
+        env: process.env,
+        exists: existsSync,
+      });
+      if (!result.ok) {
+        log(`MCP server resolution failed: ${result.message}`);
+        void vscode.window.showErrorMessage(`Longstone: ${result.message}`);
+        // Returning undefined tells VS Code not to start a server that cannot
+        // run, instead of launching a command that does not exist.
+        return undefined;
+      }
+      const validated = buildServerDefinition({
+        allowWriteTools: readAllowWriteTools(),
+        cliPath,
+      });
       return toVsCodeDefinition({
         ...validated,
         // Preserve the label the host handed us (the user may have renamed it).
@@ -129,8 +145,10 @@ export function activate(context: vscode.ExtensionContext): void {
 
   context.subscriptions.push(
     vscode.workspace.onDidChangeConfiguration((event) => {
-      if (event.affectsConfiguration(SETTING_KEYS.allowWriteTools)) {
-        probeCache = undefined;
+      if (
+        event.affectsConfiguration(SETTING_KEYS.cliPath) ||
+        event.affectsConfiguration(SETTING_KEYS.allowWriteTools)
+      ) {
         definitionsChanged.fire();
       }
       if (

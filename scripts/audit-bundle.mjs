@@ -46,6 +46,11 @@ const BUNDLES = [
 
 /** Entry points that must never appear in any bundle. */
 const FORBIDDEN = [
+  // No runtime download and no process spawning: the extension never fetches
+  // the CLI, and VS Code (not this code) starts the installed `longstone`.
+  ['node:child_process', /node:child_process/g],
+  ['child_process', /\bchild_process\b/g],
+  ['npx', /\bnpx\b/g],
   ['window.ethereum', /window\.ethereum/g],
   // Minifiers may suffix a duplicate binding with a digit; a word boundary
   // alone would miss `createWalletClient2` while still not matching

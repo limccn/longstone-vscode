@@ -11,9 +11,13 @@
  *    that keeps an agent from calling `memory_put` through this extension.
  *
  * 2. The definition is fully determined (no interactive input), so VS Code can
- *    start the server without a Webview or prompt. `resolve` only *validates*
- *    that the pinned CLI resolves; it never changes the tool surface.
+ *    start the server without a Webview or prompt. The command is the
+ *    user-installed `longstone` CLI (or the value of `longstone.cliPath`); this
+ *    extension never downloads, installs, or spawns a process. `resolve` only
+ *    checks that the configured command exists on disk; VS Code starts it.
  */
+
+import { posix, win32 } from 'node:path';
 
 import {
   LONGSTONE_CLI_VERSION,
@@ -26,6 +30,8 @@ import {
 export interface ProviderInput {
   /** Value of `longstone.allowWriteTools`. */
   allowWriteTools: boolean;
+  /** Value of `longstone.cliPath` (the host trims it and falls back to `longstone`). */
+  cliPath: string;
 }
 
 export interface ProviderServer {
@@ -35,13 +41,6 @@ export interface ProviderServer {
   env: Record<string, string | number | null>;
   version?: string;
 }
-
-/** Exact launch arguments; no range, no `latest` (PS-5). */
-export const MCP_ARGS: readonly string[] = [
-  '-y',
-  `${LONGSTONE_PACKAGE}@${LONGSTONE_CLI_VERSION}`,
-  'serve',
-];
 
 /**
  * Server environment.
@@ -68,15 +67,19 @@ export function providerEnv(input: ProviderInput): Record<string, string | numbe
   };
 }
 
-/** The stdio definition supplied to VS Code. */
+/**
+ * The stdio definition supplied to VS Code.
+ *
+ * `command` is the user-installed CLI; the only argument is `serve`. There is
+ * no package name and no version argument because nothing is fetched at run
+ * time. The `version` field only signals a tool-surface change to VS Code.
+ */
 export function buildServerDefinition(input: ProviderInput): ProviderServer {
   return {
     label: MCP_PROVIDER_LABEL,
-    command: 'npx',
-    args: [...MCP_ARGS],
+    command: input.cliPath,
+    args: ['serve'],
     env: providerEnv(input),
-    // A version change tells VS Code to offer a tool refresh. It deliberately
-    // tracks the read-only setting as well, because that changes the tool list.
     version: `${LONGSTONE_CLI_VERSION}+${input.allowWriteTools ? 'write-on' : 'read-only'}`,
   };
 }
@@ -100,134 +103,87 @@ export function keyPresence(env: NodeJS.ProcessEnv): {
   };
 }
 
-/**
- * Arguments for the resolution check.
- *
- * `npx --no-install <pkg> --version` runs only from the local npm cache and
- * fails fast when the pinned version is not present, which is the check
- * `resolveMcpServerDefinition` needs: it must not trigger a network install
- * while the editor is starting a server.
- */
-export function resolveProbeArgs(): string[] {
-  return ['--no-install', `${LONGSTONE_PACKAGE}@${LONGSTONE_CLI_VERSION}`, '--version'];
+export interface CliLookupInput {
+  /** `longstone.cliPath` value: a bare command or an absolute/relative path. */
+  command: string;
+  platform: NodeJS.Platform;
+  env: NodeJS.ProcessEnv;
+  /** Filesystem predicate; production passes `fs.existsSync`, tests a fake. */
+  exists: (candidate: string) => boolean;
 }
 
-/**
- * Arguments for the one allowed retry after a cold-cache failure.
- *
- * The launch command itself is `npx -y …`, so a first run on a clean machine
- * *will* fetch the package. Blocking that first run on a cache probe would
- * make the provider unusable until the user had run npx manually, so the
- * probe retries once with `-y` (bounded by a longer timeout) and only fails
- * when that fetch also fails.
- */
-export function installProbeArgs(): string[] {
-  return ['-y', `${LONGSTONE_PACKAGE}@${LONGSTONE_CLI_VERSION}`, '--version'];
-}
+export type CliLookupResult = { ok: true } | { ok: false; message: string };
 
-/**
- * On Windows `npx` is `npx.cmd`, and Node 24 refuses to spawn a `.cmd` without
- * a shell (`EINVAL`) while a bare `npx` is `ENOENT`. Both failure modes look
- * like "the CLI is missing" to a user, so the probe must use a shell there.
- *
- * With `shell: true` Node concatenates `args` unescaped (DEP0190), so Windows
- * gets ONE constant command line instead of an args array. Every token comes
- * from this module; no user input, setting or chain value is interpolated, so
- * there is nothing to escape.
- */
-export function probeSpawnOptions(
-  platform: NodeJS.Platform,
-  args: readonly string[] = resolveProbeArgs(),
-): { command: string; args: string[]; shell: boolean } {
-  return platform === 'win32'
-    ? { command: ['npx', ...args].join(' '), args: [], shell: true }
-    : { command: 'npx', args: [...args], shell: false };
-}
-
-export interface ProbeResult {
-  ok: boolean;
-  /** Present when `ok` is false; safe to show in an error notification. */
-  message?: string;
-  stdout?: string;
-  /**
-   * The pinned package is simply not in the npx cache yet. This is the normal
-   * first-run state: the server launch (`npx -y …`) would download it, so the
-   * host may retry once with `-y` instead of treating it as a hard failure.
-   */
-  missingFromCache?: boolean;
-}
-
-/**
- * Interpret the probe's exit status. Kept pure so the error text is covered
- * by tests: the message must name the exact package and the likely fixes,
- * because "server failed to start" with no detail is the failure mode this
- * check exists to prevent.
- */
-export function interpretProbeResult(input: {
-  code: number | null;
-  signal: string | null;
-  stdout: string;
-  stderr: string;
-  timedOut: boolean;
-}): ProbeResult {
-  if (input.timedOut) {
-    return {
-      ok: false,
-      message:
-        `Timed out checking ${LONGSTONE_PACKAGE}@${LONGSTONE_CLI_VERSION}. ` +
-        `Run \`npx -y ${LONGSTONE_PACKAGE}@${LONGSTONE_CLI_VERSION} --version\` once in a terminal to populate the npm cache.`,
-    };
-  }
-  if (input.code === 0) {
-    const version = input.stdout.trim().split(/\r?\n/).filter(Boolean).pop() ?? '';
-    if (version !== LONGSTONE_CLI_VERSION) {
-      return {
-        ok: false,
-        message: `\`npx --no-install\` resolved ${LONGSTONE_PACKAGE} to "${version}" instead of ${LONGSTONE_CLI_VERSION}. The provider pins ${LONGSTONE_CLI_VERSION} exactly; clear the npx cache entry or install the pinned version.`,
-        stdout: input.stdout,
-      };
-    }
-    return { ok: true, stdout: input.stdout };
-  }
-
-  const output = `${input.stderr}\n${input.stdout}`;
-  const detail = output.trim().slice(0, 400);
-  // npm prints "canceled due to missing packages" (or similar) when
-  // --no-install cannot find the package locally. That is not a packaging
-  // failure; it is a cold cache. A 404, by contrast, means the pinned version
-  // really is not resolvable and retrying would not help.
-  const cacheMiss = /canceled due to missing packages|missing packages and no YES option|not installed/i.test(
-    output,
+/** A message that names both the global install and the escape hatch. */
+function missingCliMessage(detail: string): string {
+  return (
+    `${detail}. Install it with \`npm install -g ${LONGSTONE_PACKAGE}@${LONGSTONE_CLI_VERSION}\`, ` +
+    'or set `longstone.cliPath` to its full path.'
   );
-  const notFound = /\bE404\b|\b404\b/.test(output);
-  return {
-    ok: false,
-    missingFromCache: cacheMiss && !notFound,
-    message:
-      `${LONGSTONE_PACKAGE}@${LONGSTONE_CLI_VERSION} does not resolve` +
-      (detail === '' ? '' : `: ${detail}`) +
-      `. Run \`npx -y ${LONGSTONE_PACKAGE}@${LONGSTONE_CLI_VERSION} --version\` once (or check npm/network access), then retry.`,
-    stdout: input.stdout,
-  };
 }
 
-/** Interpretation for the `-y` retry after a cold-cache probe. */
-export function interpretInstallProbeResult(input: {
-  code: number | null;
-  signal: string | null;
-  stdout: string;
-  stderr: string;
-  timedOut: boolean;
-}): ProbeResult {
-  const interpreted = interpretProbeResult(input);
-  if (interpreted.ok) return interpreted;
-  const detail = `${input.stderr}\n${input.stdout}`.trim().slice(0, 400);
-  return {
-    ok: false,
-    message:
-      `Could not fetch ${LONGSTONE_PACKAGE}@${LONGSTONE_CLI_VERSION} with npx` +
-      (detail === '' ? '' : `: ${detail}`) +
-      '. Check npm/network access, then retry.',
-    stdout: input.stdout,
+/**
+ * Locate the CLI without executing anything.
+ *
+ * Pure by construction: the caller supplies the filesystem predicate, so the
+ * lookup is a sequence of string operations plus `exists` calls. It never
+ * spawns a process, reads a version, or touches the network. `resolve` uses it
+ * to avoid handing VS Code a server command that cannot start, while the
+ * actual process is still launched by VS Code's MCP client.
+ *
+ * Resolution rules:
+ * - Empty/whitespace command: fail without consulting the filesystem.
+ * - Absolute or slash/backslash-containing command: check it directly; on
+ *   Windows, a command with no extension also tries every `PATHEXT` variant.
+ * - Bare command: check each non-empty `PATH` directory (Windows `PATHEXT`
+ *   variants included; surrounding whitespace and quotes on Windows entries are
+ *   stripped). `PATH` is preferred over `Path`, matching Node's environment
+ *   shape; `process.env` is case-insensitive on Windows anyway.
+ */
+export function resolveCliCommand(input: CliLookupInput): CliLookupResult {
+  const command = input.command.trim();
+  if (command === '') {
+    return { ok: false, message: missingCliMessage('the configured CLI path is empty') };
+  }
+
+  const windows = input.platform === 'win32';
+  const pathApi = windows ? win32 : posix;
+  const extensions = windows
+    ? (input.env.PATHEXT ?? '.COM;.EXE;.BAT;.CMD')
+        .split(';')
+        .map((extension) => extension.trim())
+        .filter((extension) => extension !== '')
+    : [];
+  const hasExtension = windows && pathApi.extname(command) !== '';
+  const pathLike = pathApi.isAbsolute(command) || command.includes('/') || command.includes('\\');
+
+  const candidates: string[] = [];
+  const addCandidates = (base: string): void => {
+    candidates.push(base);
+    if (!windows) return;
+    for (const extension of extensions) candidates.push(`${base}${extension}`);
   };
+
+  if (pathLike) {
+    candidates.push(command);
+    if (!hasExtension) {
+      for (const extension of extensions) candidates.push(`${command}${extension}`);
+    }
+  } else {
+    const rawPath = input.env.PATH ?? input.env.Path ?? '';
+    for (const entry of rawPath.split(windows ? ';' : ':')) {
+      // Windows accepts quoted PATH entries (common when a directory contains
+      // spaces); the quotes are not part of the directory name, and leaving
+      // them in would make every joined candidate unmatchable. Ignore
+      // surrounding whitespace the same way.
+      const directory = windows ? entry.trim().replace(/^"(.*)"$/, '$1') : entry;
+      if (directory === '') continue;
+      addCandidates(pathApi.join(directory, command));
+    }
+  }
+
+  for (const candidate of candidates) {
+    if (input.exists(candidate)) return { ok: true };
+  }
+  return { ok: false, message: missingCliMessage(`the CLI "${command}" was not found`) };
 }

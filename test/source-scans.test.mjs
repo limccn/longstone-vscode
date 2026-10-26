@@ -65,6 +65,18 @@ const NETWORK_OR_OUTPUT = [
   ['sendBeacon', /\bsendBeacon\b/],
 ];
 
+/**
+ * Runtime download / process-spawn markers. The extension launches the
+ * user-installed CLI only through VS Code's MCP client; it must never fetch a
+ * package or start a process itself. The bundle audit enforces the same rule
+ * on `dist/`, and this scan catches it at the source level.
+ */
+const RUNTIME_EXECUTION = [
+  ['npx', /\bnpx\b/],
+  ['child_process', /\bchild_process\b/],
+  ['node:child_process', /node:child_process/],
+];
+
 /** Find the first forbidden construct in `dir`; returns "file: label". */
 function findForbidden(dir, rules) {
   const leaks = [];
@@ -125,6 +137,11 @@ test('the secret webview has no network, console, debugger or dynamic code', () 
   assert.deepEqual(leaks, []);
 });
 
+test('the extension sources contain no runtime download or process spawn', () => {
+  const leaks = findForbidden(path.join(ROOT, 'src'), rules(...RUNTIME_EXECUTION));
+  assert.deepEqual(leaks, []);
+});
+
 test('the scanners are non-vacuous and ignore comments', () => {
   // The real scans visit real files, so a broken directory path cannot pass.
   assert.ok(sourceFiles(WALLET_HOST).length >= 10);
@@ -149,6 +166,16 @@ test('the scanners are non-vacuous and ignore comments', () => {
   // webview API; only the module import is forbidden.
   const localHandle = 'const vscode: VsCodeApi = acquireVsCodeApi();';
   assert.deepEqual(findForbiddenIn(localHandle, rules(['vscode import', 'vscode'])), []);
+
+  // Runtime download / spawn markers: prose is ignored, code is not.
+  assert.deepEqual(
+    findForbiddenIn('// npx is mentioned in prose only', rules(...RUNTIME_EXECUTION)),
+    [],
+  );
+  assert.deepEqual(
+    findForbiddenIn('const spawn = require("node:child_process");', rules(...RUNTIME_EXECUTION)),
+    ['child_process', 'node:child_process'],
+  );
 });
 
 /** Same scan as `findForbidden`, for one synthetic source string. */
