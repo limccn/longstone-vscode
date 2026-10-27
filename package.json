@@ -2,7 +2,7 @@
   "name": "longstone-vscode",
   "displayName": "Longstone Memory",
   "description": "Read-only Longstone memory browser and MCP provider for Base Sepolia, with a local encrypted account store that never signs.",
-  "version": "0.2.2",
+  "version": "0.2.3",
   "publisher": "limccn",
   "icon": "media/icon128x128.png",
   "license": "Apache-2.0",

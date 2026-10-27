@@ -29,6 +29,24 @@ setting).
 > an on-chain memory — only a commitment hash resolved against registry state
 > is.
 
+## What changed in 0.2.3
+
+- **Checker reads the 1.143 storage layout.** `scripts/check-wallet-db.mjs`
+  now resolves the per-extension `globalState` container
+  (`limccn.longstone-vscode`) used by VS Code 1.143, with the legacy top-level
+  keys still taking precedence. The output gains a `layout` line and `--json`
+  gains a `layout` field (`unknown` on environment errors).
+- **Malformed private keys are explained.** The import panel now forwards any
+  non-empty input up to 1 KiB to the core, so a malformed key shows
+  `The private key must be 0x followed by 64 hex characters.` instead of being
+  dropped silently.
+- **External changes are reported after focus loss.** A wallet locked by losing
+  focus is now probed as well, so another window's write surfaces
+  `Wallet data changed in another window. Unlock again.` when focus returns.
+  Pending-only vaults and writes already in flight are not probed.
+- **No contract change.** Wallet storage, MCP provider behaviour and settings
+  are unchanged from 0.2.2.
+
 ## What changed in 0.2.2
 
 - **Webview CSP source lists.** VS Code 1.143 reports `webview.cspSource` as
@@ -75,7 +93,7 @@ it:
 ```bash
 corepack pnpm install                 # from the workspace root
 pnpm --dir longstone-vscode package   # builds + runs the pinned vsce 4.0.0
-code --install-extension longstone-vscode-0.2.2.vsix
+code --install-extension longstone-vscode-0.2.3.vsix
 ```
 
 In VS Code: **Extensions → … → Install from VSIX…** does the same thing.

@@ -49,8 +49,8 @@ const EXPECTED_COMMANDS = [
   'longstone.wallet.reset',
 ];
 
-check('the store release is version 0.2.2', () => {
-  assert.equal(manifest.version, '0.2.2');
+check('the store release is version 0.2.3', () => {
+  assert.equal(manifest.version, '0.2.3');
 });
 
 check('the store icon is the packaged 128x128 png', () => {

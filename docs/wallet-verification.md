@@ -385,6 +385,7 @@ the fix branch, and M2's D-3 note is cleared. Matrix: 12 Pass, 0 Fail, 2 Blocked
 Build verified: version `0.2.2` · commit `f3b4c13` · VS Code
 `1.143.1 (e646868227c3e3a9e3f24277c8c7220be42c0be7)` · OS `Windows Server 2022 Standard Evaluation 10.0.20348`.
 D-2 retest build: local VSIX from commit `081e3c2` · VS Code `1.143.1`.
+D-1/D-3/D-4 retest build: local VSIX `0.2.2-d134-local` from code commit `c1da3ab` · VS Code `1.143.1` (0.2.3 packages the same code).
 
 ## 5. Known limitations
 
