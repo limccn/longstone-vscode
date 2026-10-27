@@ -53,8 +53,12 @@ scripts, docs, maps and `node_modules` must not appear.
 
 `scripts/check-wallet-db.mjs` opens the SQLite state database **read-only**
 and validates the wallet record with the shared core's strict parser. It
-prints key names, status, KDF parameters and ciphertext length — never the
-salt, IV or ciphertext.
+prints the storage layout, key names, status, KDF parameters and ciphertext
+length — never the salt, IV or ciphertext. Both layouts are supported: the
+legacy top-level `longstone.wallet.v1` rows and the VS Code 1.143+
+per-extension container row keyed by `limccn.longstone-vscode`. `--json`
+prints `{ db, layout, ok, exitCode, failures }`; when the database cannot be
+opened or read (exit 2), `layout` is `unknown`.
 
 ```bash
 # Default location for this platform's stable VS Code profile:
@@ -74,9 +78,16 @@ Expected output with one wallet record:
 
 ```text
 state.vscdb: <path>
+layout   top-level
 record   longstone.wallet.v1  ok  format=longstone.wallet.v1 kdf=65536/3/1 ciphertext=<n>B
 pending  longstone.wallet.v1.pending  absent
 ```
+
+On VS Code 1.143+ the layout line is
+`layout   container limccn.longstone-vscode` and the record/pending lines are
+unchanged. A container that cannot be parsed reports
+`layout   container limccn.longstone-vscode  FAIL  invalid-json` (or
+`invalid-shape` / `unsupported-value-type`) with exit 1.
 
 The KDF rung may be lower on a slow device (`32768/3/1` or `19456/2/1`);
 that is the documented ladder, not a failure.
@@ -136,7 +147,10 @@ Steps:
 
 Expected: after each import, the status bar shows the address derived from the
 imported material; unlocking later reproduces the same address. Invalid
-words/checksum or a malformed private key are rejected before any write.
+words/checksum or a malformed private key are rejected before any write: the
+import panel stays open and shows the matching static message
+(`The private key must be 0x followed by 64 hex characters.` or
+`The private key is not a valid secp256k1 key.`).
 
 ### M3 — Wrong password and unlock backoff
 
@@ -278,11 +292,15 @@ Steps:
 
 1. In window B, unlock the same wallet with the same password.
 2. In B, add an account (or rename one) and wait for success.
-3. Focus window A; if it has not reacted, wait up to 10 s for the poll.
+3. Return to window A. Do not run a wallet command first; the detection must
+   reach the user on its own (D-4).
 
-Expected: A locks with `Wallet data changed in another window. Unlock again.`;
-the address disappears; unlocking A shows the change made in B. A never
-reports its own writes as external.
+Expected: A locks with `Wallet data changed in another window. Unlock again.`,
+shown by the focus-regain handler. The 10 s poll only records the change (it
+never displays a message by itself); if the notice is missed, the next wallet
+command shows it. The address disappears; unlocking A shows the change made in
+B. A never reports its own writes as external. Focus loss alone (no write in
+B) locks A silently, without a notice.
 
 ### M12 — Remote-SSH refusal
 
@@ -308,11 +326,13 @@ Steps:
 3. Optionally run it once more with `--json` and confirm the failures array is
    empty.
 
-Expected: exit 0; the record line reports `ok`, the KDF parameters and a
-ciphertext length; pending is `absent`. The output contains no salt, IV,
-ciphertext or recovery phrase. The database value is a JSON envelope whose
-only top-level keys are `cipher, createdAt, domain, format, kdf, updatedAt,
-version` — no account labels, addresses, mnemonics or keys.
+Expected: exit 0; the `layout` line names `top-level` or
+`container limccn.longstone-vscode`; the record line reports `ok`, the KDF
+parameters and a ciphertext length; pending is `absent`. The output contains
+no salt, IV, ciphertext or recovery phrase. The stored wallet value (the
+top-level row, or the container's `longstone.wallet.v1` field) is a JSON
+envelope whose only top-level keys are `cipher, createdAt, domain, format,
+kdf, updatedAt, version` — no account labels, addresses, mnemonics or keys.
 
 ### M14 — Reload keeps the wallet locked
 
@@ -333,19 +353,19 @@ material.
 
 | # | Case | Result (Pass/Fail/Blocked) | Executor | Date | Notes |
 |---|---|---|---|---|---|
-| M1 | Create a wallet | Pass | Claude Code (AI) | 2026-10-26 | Closing the panel without "I saved it" wrote nothing; after saving, `Wallet created. Back up your recovery phrase offline.`, status `0x8E6a…9625, Account 1`; one record (kdf 65536/3/1, ciphertext 380 B), pending absent. D-1: VS Code 1.143 keeps `globalState` in a per-extension container, so the shipped checker cannot see the record; verified with a read-only container inspector. |
-| M2 | Import mnemonic and private key | Pass | Claude Code (AI) | 2026-10-26 | Invalid mnemonic rejected in the panel with the wordlist message and no write; `TEST_MNEMONIC` → `0xf39F…2266` matching an independent derivation, reproducible after lock/unlock; fresh DB + `TEST_PRIVATE_KEY` → `0x7099…79C8` matching derivation. A malformed key wrote nothing but showed no error (D-3). |
+| M1 | Create a wallet | Pass | Claude Code (AI) | 2026-10-26 | Closing the panel without "I saved it" wrote nothing; after saving, `Wallet created. Back up your recovery phrase offline.`, status `0x8E6a…9625, Account 1`; one record (kdf 65536/3/1, ciphertext 380 B), pending absent. D-1 at the time: verified with a read-only container inspector; the shipped checker now reads this layout too (see M13). |
+| M2 | Import mnemonic and private key | Pass | Claude Code (AI) | 2026-10-27 | Invalid mnemonic rejected in the panel with the wordlist message and no write; `TEST_MNEMONIC` → `0xf39F…2266` matching an independent derivation, reproducible after lock/unlock; fresh DB + `TEST_PRIVATE_KEY` → `0x7099…79C8` matching derivation. D-3 retest on a local VSIX: pasting `0x1234` and continuing shows `The private key must be 0x followed by 64 hex characters.`, the panel stays open with `Continue`/`Cancel`, and the record is unchanged with pending absent (checker exit 0). Supersedes the 2026-10-26 note that a malformed key wrote nothing but showed no error. |
 | M3 | Wrong password and unlock backoff | Pass | Claude Code (AI) | 2026-10-26 | Every wrong attempt reported the decrypt failure; attempt pacing measured 1.3/2.2/4.2/8.3/16.2/30.3 s. The notice shows the **remaining** delay (1/3/7/15/29 s) — the 1 s rung is absorbed by ~1.3 s of prompt overhead; the unit test pins the nominal 1/2/4/8/16/30 ladder. Re-lock kept the limiter (`The wallet is already locked.`); the correct password unlocked after the cap; reload reset only the in-process counter (no delay 1.35 s after a 30 s cap). |
 | M4 | Lock | Pass | Claude Code (AI) | 2026-10-26 | `Wallet locked.`; the status bar hid the address; `Copy Wallet Address` refused with `Unlock the wallet first.`. |
 | M5 | Export with the 60 s countdown | Pass | Claude Code (AI) | 2026-10-26 | Wrong password: `Incorrect password. Nothing was exported.`, no panel. Correct: secret panel with a countdown (first read 59 s after render, 55 s after 3 s); early close discarded it; reopen restarted at 58 s; Copy produced a 12-word phrase (count only, clipboard cleared, no screenshot of the panel); auto-closed at zero; wallet stayed unlocked. |
 | M6 | Change password | Pass | Claude Code (AI) | 2026-10-26 | `Password changed.` with the session still unlocked; old password failed, new password unlocked `0x8E6a…9625`; one record and pending absent (read-only container inspector). |
-| M7 | Reset | Fail | Claude Code (AI) | 2026-10-26 | Unlocked reset correctly refused (Pass part). Locked reset opens a native modal whose activation triggers the focus-loss lock; the flow then aborts silently — no `RESET` prompt, no deletion, no message. `window.dialogStyle: "custom"` confirms the cause, but the default `native` path is broken. D-2. |
-| M8 | Delete the last account | Fail | Claude Code (AI) | 2026-10-26 | The last-account warning appears (Pass part); the wallet locks the moment the modal opens, accepting `Delete` does nothing, and the wallet remains. D-2. |
+| M7 | Reset | Pass | Claude Code (AI) | 2026-10-27 | Retested on a local VSIX built from `081e3c2` (D-2 fix) on VS Code 1.143.1. Unlocked reset refused with `Lock the wallet before resetting it.`; locked reset opened an in-window notification — no native `#32770` dialog, the target window kept foreground, the wallet stayed `LOCKED`, buttons `Continue`/`Cancel`. Continue + typed `RESET` → `Wallet deleted.`, state `NO_VAULT`, no address; the checker exits 1 with the record absent (expected post-deletion state). Supersedes the 2026-10-26 Fail (D-2). |
+| M8 | Delete the last account | Pass | Claude Code (AI) | 2026-10-27 | Retested on the same local build: the last-account warning is an in-window notification with `Delete`/`Cancel`, no native dialog, window focused, wallet `UNLOCKED` while open. Accepting `Delete` → `Wallet deleted.`, state `NO_VAULT`; after closing VS Code the record and pending keys are absent (read-only container inspector). Supersedes the 2026-10-26 Fail (D-2). |
 | M9 | Idle lock (15 minutes) | Blocked | Claude Code (AI) | 2026-10-26 | Three attempts, all invalidated by the environment. Unrelated windows took the foreground at 142 s (Chrome) and 41 s (`CC Switch`); the focus-loss lock fired in both. A third 17-minute observation with foreground sampling reached 779 s before the status bar showed `Locked` — 121 s short of the 900 s deadline. The check right after showed the session still Active and Unlocked (WTSINFOEX `SessionState=0`, `SessionFlags=1`), the input desktop `Default`, no LogonUI in the session, and `GetLastInputInfo` showed no human input during the run; but the foreground handle had become 0, `SetForegroundWindow` failed, and screen capture failed with an invalid handle (the start-of-run capture rendered fine) — the session's display output was suspended, VS Code was deactivated, and the wallet locked on focus loss as designed. The 15-minute idle timer was not observed. The controller test pins 900 000 ms with a 30 s check interval. Not a product defect; re-runnable on a session that can hold foreground and display output for 16+ minutes. |
 | M10 | Focus loss | Pass | Claude Code (AI) | 2026-10-26 | Switching to Notepad and back locked immediately; the reveal panel was gone, the address hidden, and an unlock was required. |
-| M11 | Two windows, external change | Fail | Claude Code (AI) | 2026-10-26 | Window A locked within 1 s of B gaining focus, but the `Wallet data changed in another window. Unlock again.` notice never appeared in the 10 s poll (external polling runs only while UNLOCKED); after re-unlocking, A showed B's rename. D-4. |
+| M11 | Two windows, external change | Pass | Claude Code (AI) | 2026-10-27 | D-4 retest on a local VSIX (same profile, two windows): after B unlocked and renamed the account to `M11 Account`, focusing A showed `Wallet data changed in another window. Unlock again.` about 1 s after focus return without running a command; A stayed `Locked`; unlocking and opening Manage showed `M11 Account, 0x8E6a…9625 · active`. Supersedes the 2026-10-26 Fail (notice unreachable after focus-loss lock). |
 | M12 | Remote-SSH refusal | Blocked | Claude Code (AI) | 2026-10-26 | No remote environment: both profiles have only the test extension installed, no `ms-vscode-remote.*`, no SSH config, and local-only window titles. The three commands could not be run in a remote window; the wallet is local-only by design, so no remote storage write path exists. |
-| M13 | Ciphertext at rest | Fail | Claude Code (AI) | 2026-10-26 | VS Code closed. The shipped checker exits 1 with `missing wallet record` on both profiles because 1.143 stores `globalState` under the per-extension container (D-1). The read-only container inspector exits 0: record ok (65536/3/1, ciphertext 380 B), pending absent, no salt/IV/ciphertext/phrase in the output, and the strict parser enforces exactly the seven envelope keys with no plaintext fields. The at-rest property holds; the checker is unusable on 1.143. |
+| M13 | Ciphertext at rest | Pass | Claude Code (AI) | 2026-10-27 | D-1 retest with the shipped checker on the closed VS Code 1.143 profile: exit 0, `layout container limccn.longstone-vscode`, record ok (kdf 65536/3/1, ciphertext 380 B), pending absent, no salt/IV/ciphertext/phrase in the output; deleting the record makes it exit 1 with `missing wallet record`. A live read-only `--json` check on the reopened profile also exits 0. The strict parser enforces exactly the seven envelope keys with no plaintext fields. Supersedes the 2026-10-26 Fail (checker blind to the container layout). |
 | M14 | Reload keeps the wallet locked | Pass | Claude Code (AI) | 2026-10-26 | After `Developer: Reload Window` the wallet came back `LOCKED`, the address was hidden, `Manage Wallet` offered `Unlock / Change password / Reset wallet`, and a panel open before the reload did not return. |
 
 Owner sign-off: 2026-10-26 — accepted as recorded above (8 Pass, 4 Fail,
@@ -353,8 +373,18 @@ Owner sign-off: 2026-10-26 — accepted as recorded above (8 Pass, 4 Fail,
 session that can hold foreground and display output; the failures and blocked
 cases are tracked as D-1…D-4 in `.trellis/tasks/10-26-vscode-wallet-gui-matrix`.
 
+D-2 retest: 2026-10-27 — M7 and M8 now pass on a local build carrying the D-2
+fix, bringing the matrix to 10 Pass, 2 Fail, 2 Blocked. The remaining failures
+are D-1 (M13 checker on the 1.143 container) and D-4 (M11 external-change
+notice); M12 remains environment-blocked.
+
+D-1/D-3/D-4 retest: 2026-10-27 — M11 and M13 now pass on a local VSIX built from
+the fix branch, and M2's D-3 note is cleared. Matrix: 12 Pass, 0 Fail, 2 Blocked
+(M9, M12). These retested rows are recorded here and await owner sign-off.
+
 Build verified: version `0.2.2` · commit `f3b4c13` · VS Code
 `1.143.1 (e646868227c3e3a9e3f24277c8c7220be42c0be7)` · OS `Windows Server 2022 Standard Evaluation 10.0.20348`.
+D-2 retest build: local VSIX from commit `081e3c2` · VS Code `1.143.1`.
 
 ## 5. Known limitations
 
