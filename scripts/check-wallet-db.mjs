@@ -4,7 +4,9 @@
  * (design §4.1/§4.5; PRD R6).
  *
  * The extension stores the `wallet.v1` record as a string under two
- * `globalState` keys. This script opens the SQLite database read-only,
+ * `globalState` keys. Depending on the VS Code version those keys live either
+ * as their own `ItemTable` rows or as fields of the per-extension memento
+ * container (1.143+). This script opens the SQLite database read-only,
  * validates the envelope and ciphertext properties with the shared core's
  * strict parser, and prints only key names, statuses, KDF parameters and
  * ciphertext length. Record values are never printed.
@@ -35,6 +37,11 @@ import {
 // test/wallet-db-check.test.mjs asserts the two stay in sync.
 export const RECORD_KEY = 'longstone.wallet.v1';
 export const PENDING_KEY = 'longstone.wallet.v1.pending';
+
+// VS Code 1.143 stores the extension's whole `globalState` memento as one
+// `ItemTable` row keyed by the extension id. Mirrors `publisher.name` in
+// package.json; test/wallet-db-check.test.mjs asserts the two stay in sync.
+export const CONTAINER_KEY = 'limccn.longstone-vscode';
 
 const EXPECTED_TOP_LEVEL = [
   'cipher',
@@ -107,16 +114,22 @@ function decodeRecordText(text) {
 
 /**
  * Validates one stored value. `rawValue` is what SQLite returned (TEXT or
- * BLOB); `null`/`undefined` means the key is absent.
+ * BLOB) for a top-level key, or the already-decoded field from the
+ * per-extension container memento; `null`/`undefined` means the key is absent.
  */
 export function inspectWalletValue(rawValue, key) {
   if (rawValue === null || rawValue === undefined) {
     return { ok: true, absent: true, notes: [] };
   }
-  const text = textOf(rawValue);
-  if (text === null) return fail('unsupported-value-type', key);
 
-  const parsed = decodeRecordText(text);
+  let parsed;
+  if (typeof rawValue === 'object' && !(rawValue instanceof Uint8Array)) {
+    parsed = rawValue;
+  } else {
+    const text = textOf(rawValue);
+    if (text === null) return fail('unsupported-value-type', key);
+    parsed = decodeRecordText(text);
+  }
   if (parsed === null || typeof parsed !== 'object' || Array.isArray(parsed)) {
     return fail('invalid-json', key);
   }
@@ -173,6 +186,63 @@ export function defaultStateDbPath(
   return path.join(home, '.config', 'Code', 'User', 'globalStorage', 'state.vscdb');
 }
 
+function layoutLine(layout, containerError) {
+  if (layout !== 'container') return `layout   ${layout}`;
+  const base = `layout   container ${CONTAINER_KEY}`;
+  return containerError === undefined ? base : `${base}  FAIL  ${containerError}`;
+}
+
+/**
+ * Resolves both wallet values from either storage layout.
+ *
+ * Legacy profiles keep one `ItemTable` row per `globalState` key. VS Code
+ * 1.143 keeps the extension's whole memento in one row keyed by the extension
+ * id, with the wallet keys as JSON fields. Top-level rows win so an older
+ * profile that also happens to contain a container entry is not mixed.
+ */
+function readStoredWalletValues(db) {
+  const topRows = db
+    .prepare('SELECT key, value FROM ItemTable WHERE key IN (?, ?) ORDER BY key')
+    .all(RECORD_KEY, PENDING_KEY);
+
+  if (topRows.length > 0) {
+    return {
+      layout: 'top-level',
+      values: new Map(topRows.map((row) => [row.key, row.value])),
+    };
+  }
+
+  const row = db.prepare('SELECT value FROM ItemTable WHERE key = ?').get(CONTAINER_KEY);
+  if (row === undefined) {
+    return { layout: 'none', values: new Map() };
+  }
+
+  const text = textOf(row.value);
+  if (text === null) {
+    return {
+      layout: 'container',
+      values: new Map(),
+      containerError: 'unsupported-value-type',
+    };
+  }
+
+  let memento;
+  try {
+    memento = JSON.parse(text);
+  } catch {
+    return { layout: 'container', values: new Map(), containerError: 'invalid-json' };
+  }
+  if (memento === null || typeof memento !== 'object' || Array.isArray(memento)) {
+    return { layout: 'container', values: new Map(), containerError: 'invalid-shape' };
+  }
+
+  const values = new Map();
+  for (const key of [RECORD_KEY, PENDING_KEY]) {
+    if (Object.hasOwn(memento, key)) values.set(key, memento[key]);
+  }
+  return { layout: 'container', values };
+}
+
 function lineFor(key, result) {
   const name = key === RECORD_KEY ? 'record' : 'pending';
   if (result.absent) return `${name.padEnd(8)} ${key}  absent`;
@@ -206,21 +276,28 @@ export function checkWalletDb(dbPath) {
       return { exitCode: 2, lines, failures };
     }
 
-    const rows = db
-      .prepare('SELECT key, value FROM ItemTable WHERE key IN (?, ?) ORDER BY key')
-      .all(RECORD_KEY, PENDING_KEY);
-    const stored = new Map(rows.map((row) => [row.key, row.value]));
+    const { layout, values, containerError } = readStoredWalletValues(db);
+    lines.push(layoutLine(layout, containerError));
 
-    const record = inspectWalletValue(stored.get(RECORD_KEY), RECORD_KEY);
+    let record;
+    let pending;
+    if (containerError !== undefined) {
+      // The container exists but cannot be read: report the unknown state
+      // instead of guessing that the wallet keys are absent.
+      record = { ok: false, absent: false, failure: 'container-unreadable' };
+      pending = { ok: false, absent: false, failure: 'container-unreadable' };
+      failures.push(`container ${CONTAINER_KEY}: ${containerError}`);
+    } else {
+      record = inspectWalletValue(values.get(RECORD_KEY), RECORD_KEY);
+      pending = inspectWalletValue(values.get(PENDING_KEY), PENDING_KEY);
+      if (record.absent) failures.push(`missing wallet record: ${RECORD_KEY}`);
+      else if (!record.ok) failures.push(`${RECORD_KEY}: ${record.failure}`);
+      if (!pending.ok) failures.push(`${PENDING_KEY}: ${pending.failure}`);
+    }
     lines.push(lineFor(RECORD_KEY, record));
-    if (record.absent) failures.push(`missing wallet record: ${RECORD_KEY}`);
-    else if (!record.ok) failures.push(`${RECORD_KEY}: ${record.failure}`);
-
-    const pending = inspectWalletValue(stored.get(PENDING_KEY), PENDING_KEY);
     lines.push(lineFor(PENDING_KEY, pending));
-    if (!pending.ok) failures.push(`${PENDING_KEY}: ${pending.failure}`);
 
-    return { exitCode: failures.length > 0 ? 1 : 0, lines, failures };
+    return { exitCode: failures.length > 0 ? 1 : 0, lines, failures, layout };
   } catch (error) {
     failures.push(`read failed: ${error.message}`);
     return { exitCode: 2, lines, failures };
@@ -278,9 +355,11 @@ export function main(argv = process.argv.slice(2)) {
   }
 
   if (args.json === true) {
-    const { exitCode, failures } = checkWalletDb(dbPath);
+    const { exitCode, failures, layout } = checkWalletDb(dbPath);
+    // Environment/usage failures happen before any layout is known; keep the
+    // documented shape stable instead of omitting the field.
     process.stdout.write(
-      `${JSON.stringify({ db: dbPath, ok: exitCode === 0, exitCode, failures }, null, 2)}\n`,
+      `${JSON.stringify({ db: dbPath, layout: layout ?? 'unknown', ok: exitCode === 0, exitCode, failures }, null, 2)}\n`,
     );
     return exitCode;
   }

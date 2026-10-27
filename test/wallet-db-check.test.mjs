@@ -23,6 +23,7 @@ import {
 } from '@limccn/longstone-wallet';
 
 import {
+  CONTAINER_KEY,
   PENDING_KEY,
   RECORD_KEY,
   checkWalletDb,
@@ -76,6 +77,16 @@ function writeDb(dbPath, entries, options = {}) {
   } finally {
     db.close();
   }
+}
+
+/** The 1.143 memento object stored under the extension-id container key. */
+function containerValue(entries) {
+  return JSON.stringify(Object.fromEntries(entries));
+}
+
+/** Records are double-encoded inside the memento, exactly as VS Code does. */
+function storedRecord(record = makeRecord()) {
+  return JSON.stringify(JSON.stringify(record));
 }
 
 describe('inspectWalletValue', () => {
@@ -220,6 +231,130 @@ describe('checkWalletDb', () => {
     assert.match(constants, new RegExp(`WALLET_STORAGE_RECORD_KEY = '${RECORD_KEY}'`));
     assert.match(constants, new RegExp(`WALLET_STORAGE_PENDING_KEY = '${PENDING_KEY}'`));
   });
+
+  it('reads a valid record from the 1.143 per-extension container', () => {
+    const dbPath = tempDbPath();
+    writeDb(dbPath, [
+      [
+        CONTAINER_KEY,
+        containerValue([
+          [RECORD_KEY, storedRecord()],
+          [PENDING_KEY, storedRecord()],
+        ]),
+      ],
+    ]);
+
+    const result = checkWalletDb(dbPath);
+    assert.equal(result.exitCode, 0);
+    assert.deepEqual(result.failures, []);
+    assert.equal(result.layout, 'container');
+    assert.match(result.lines.join('\n'), /layout\s+container limccn\.longstone-vscode/);
+    assert.match(result.lines.join('\n'), /record\s+longstone\.wallet\.v1\s+ok/);
+    assert.match(result.lines.join('\n'), /pending\s+longstone\.wallet\.v1\.pending\s+ok/);
+  });
+
+  it('reads a container stored as a BLOB and accepts a direct object value', () => {
+    const dbPath = tempDbPath();
+    writeDb(dbPath, [
+      [CONTAINER_KEY, Buffer.from(containerValue([[RECORD_KEY, makeRecord()]]), 'utf8')],
+    ]);
+
+    const result = checkWalletDb(dbPath);
+    assert.equal(result.exitCode, 0);
+    assert.equal(result.layout, 'container');
+    assert.match(result.lines.join('\n'), /pending\s+longstone\.wallet\.v1\.pending\s+absent/);
+  });
+
+  it('fails on a corrupt record inside the container', () => {
+    const dbPath = tempDbPath();
+    writeDb(dbPath, [[CONTAINER_KEY, containerValue([[RECORD_KEY, 'not json']])]]);
+
+    const result = checkWalletDb(dbPath);
+    assert.equal(result.exitCode, 1);
+    assert.match(result.failures.join('\n'), /longstone\.wallet\.v1: invalid-json/);
+    assert.match(result.lines.join('\n'), /record\s+longstone\.wallet\.v1\s+FAIL\s+invalid-json/);
+  });
+
+  it('fails when the container value cannot be read as an object', () => {
+    const cases = [
+      ['not json', /container .*: invalid-json/],
+      ['[]', /container .*: invalid-shape/],
+      [42, /container .*: unsupported-value-type/],
+    ];
+    for (const [value, pattern] of cases) {
+      const dbPath = tempDbPath();
+      writeDb(dbPath, [[CONTAINER_KEY, value]]);
+
+      const result = checkWalletDb(dbPath);
+      assert.equal(result.exitCode, 1, String(value));
+      assert.match(result.failures.join('\n'), pattern);
+      assert.match(
+        result.lines.join('\n'),
+        /record\s+longstone\.wallet\.v1\s+FAIL\s+container-unreadable/,
+      );
+      assert.equal(
+        result.lines.join('\n').includes(String(value)),
+        false,
+        'the container value is never echoed',
+      );
+    }
+  });
+
+  it('prefers top-level keys when both layouts are present', () => {
+    const dbPath = tempDbPath();
+    writeDb(dbPath, [
+      [RECORD_KEY, storedRecord()],
+      [CONTAINER_KEY, 'not json'],
+    ]);
+
+    const result = checkWalletDb(dbPath);
+    assert.equal(result.exitCode, 0);
+    assert.equal(result.layout, 'top-level');
+  });
+
+  it('fails when the container has no record key', () => {
+    const dbPath = tempDbPath();
+    writeDb(dbPath, [[CONTAINER_KEY, containerValue([[PENDING_KEY, storedRecord()]])]]);
+
+    const result = checkWalletDb(dbPath);
+    assert.equal(result.exitCode, 1);
+    assert.match(result.failures.join('\n'), /missing wallet record/);
+  });
+
+  it('never prints secrets read from the container', () => {
+    const dbPath = tempDbPath();
+    const record = makeRecord();
+    writeDb(dbPath, [[CONTAINER_KEY, containerValue([[RECORD_KEY, storedRecord(record)]])]]);
+
+    const output = checkWalletDb(dbPath).lines.join('\n');
+    for (const secret of [record.kdf.salt, record.cipher.iv, record.cipher.ciphertext]) {
+      assert.equal(output.includes(secret), false);
+    }
+  });
+
+  it('never prints other keys or values from the container', () => {
+    const dbPath = tempDbPath();
+    writeDb(dbPath, [
+      [
+        CONTAINER_KEY,
+        containerValue([
+          ['some.other.setting', JSON.stringify({ note: 'do-not-print' })],
+          [RECORD_KEY, storedRecord()],
+        ]),
+      ],
+    ]);
+
+    const result = checkWalletDb(dbPath);
+    assert.equal(result.exitCode, 0);
+    const output = [...result.lines, ...result.failures].join('\n');
+    assert.equal(output.includes('some.other.setting'), false);
+    assert.equal(output.includes('do-not-print'), false);
+  });
+
+  it('keeps the container key in sync with package.json', () => {
+    const pkg = JSON.parse(readFileSync(new URL('../package.json', import.meta.url), 'utf8'));
+    assert.equal(CONTAINER_KEY, `${pkg.publisher}.${pkg.name}`);
+  });
 });
 
 describe('CLI exit codes', () => {
@@ -235,6 +370,26 @@ describe('CLI exit codes', () => {
     const result = run(['--db', dbPath]);
     assert.equal(result.status, 0, result.stderr);
     assert.match(result.stdout, /record\s+longstone\.wallet\.v1\s+ok/);
+  });
+
+  it('reports the storage layout in --json output', () => {
+    const dbPath = tempDbPath();
+    writeDb(dbPath, [[CONTAINER_KEY, containerValue([[RECORD_KEY, storedRecord()]])]]);
+    const result = run(['--db', dbPath, '--json']);
+    assert.equal(result.status, 0, result.stderr);
+    const parsed = JSON.parse(result.stdout);
+    assert.equal(parsed.layout, 'container');
+    assert.equal(parsed.ok, true);
+  });
+
+  it('keeps the --json shape when the database cannot be opened', () => {
+    const result = run(['--db', path.join(tmpdir(), 'does-not-exist.vscdb'), '--json']);
+    assert.equal(result.status, 2);
+    const parsed = JSON.parse(result.stdout);
+    assert.equal(parsed.layout, 'unknown');
+    assert.equal(parsed.ok, false);
+    assert.equal(parsed.exitCode, 2);
+    assert.ok(parsed.failures.length > 0);
   });
 
   it('exits 1 for a validation failure', () => {
