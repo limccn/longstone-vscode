@@ -240,7 +240,7 @@ export async function promptAccountLabel(
 
 export const DELETE_CONFIRM_LABEL = 'Delete';
 
-/** Modal delete copy; the last-account case adds the whole-wallet warning. */
+/** Delete copy; the last-account case adds the whole-wallet warning. */
 export function deleteConfirmationMessage(label: string, isLastAccount: boolean): string {
   const safeLabel = sanitizeLabel(label) === '' ? 'this account' : sanitizeLabel(label);
   const base = `Delete “${safeLabel}”? The key material will be removed from this wallet.`;
@@ -253,9 +253,12 @@ export async function confirmDelete(
   label: string,
   isLastAccount: boolean,
 ): Promise<boolean> {
+  // In-window notification, never a native modal: a modal takes OS focus,
+  // the window blur fires the focus-loss lock, and the caller's epoch check
+  // would then abort the delete (D-2).
   const answer = await showWarningMessage(
     deleteConfirmationMessage(label, isLastAccount),
-    { modal: true },
+    {},
     DELETE_CONFIRM_LABEL,
     'Cancel',
   );

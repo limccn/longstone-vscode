@@ -300,6 +300,33 @@ describe('create flow', () => {
     assert.equal(memento.reads.length > 0, true);
   });
 
+  it('accepts a common password after an in-window weak-password confirmation', async () => {
+    const weak = 'password123';
+    const { controller } = makeWallet();
+    const panel = fakePanel(controller);
+    const { host, calls } = makeHost({
+      showInputBox: inputMap({
+        'Wallet password': [weak],
+        'Confirm password': [weak],
+      }),
+      async showWarningMessage(message, options, ...items) {
+        calls.warnings.push({ message, options, items });
+        return 'Use anyway';
+      },
+    });
+
+    const running = runWalletCommand(COMMAND_WALLET_CREATE, { controller, panel, host });
+    await settle();
+    panel.close('saved');
+    await running;
+
+    assert.equal(controller.state.status, 'UNLOCKED');
+    assert.equal(calls.warnings.length, 1);
+    // D-2: a native modal here would fire the focus-loss lock mid-create.
+    assert.equal(calls.warnings[0].options.modal, undefined);
+    assert.deepEqual(calls.warnings[0].items, ['Use anyway', 'Choose another']);
+  });
+
   it('discards a successful create that finishes after a lock (no success message)', async () => {
     const gate = deferred();
     const started = deferred();
@@ -617,6 +644,53 @@ describe('reset flow', () => {
     assert.deepEqual(calls.infos, []);
     assert.deepEqual(calls.errors, []);
   });
+
+  it('still resets when a focus-loss lock lands while the warning is open', async () => {
+    const { controller } = await lockedWallet();
+    const { host, calls } = makeHost({
+      async showWarningMessage(message, options, ...items) {
+        calls.warnings.push({ message, options, items });
+        // The native modal used to take OS focus and trigger exactly this lock.
+        controller.lock('focus-lost');
+        return 'Continue';
+      },
+      async showInputBox(spec) {
+        calls.inputs.push(spec);
+        return 'RESET';
+      },
+    });
+
+    await runWalletCommand(COMMAND_WALLET_RESET, {
+      controller,
+      panel: fakePanel(controller),
+      host,
+    });
+
+    assert.equal(calls.warnings[0].options.modal, undefined);
+    assert.equal(controller.state.status, 'NO_VAULT');
+    assert.ok(calls.infos.some(({ message }) => message === 'Wallet deleted.'));
+  });
+
+  it('aborts when the wallet is unlocked while the warning is open', async () => {
+    const { controller } = await lockedWallet();
+    const { host, calls } = makeHost({
+      async showWarningMessage() {
+        const unlocked = await controller.unlock(TEST_PASSWORD);
+        assert.equal(unlocked.ok, true);
+        return 'Continue';
+      },
+    });
+
+    await runWalletCommand(COMMAND_WALLET_RESET, {
+      controller,
+      panel: fakePanel(controller),
+      host,
+    });
+
+    assert.equal(controller.state.status, 'UNLOCKED');
+    assert.deepEqual(calls.inputs, []);
+    assert.equal(calls.infos.some(({ message }) => message === 'Wallet deleted.'), false);
+  });
 });
 
 describe('manage menu', () => {
@@ -644,6 +718,43 @@ describe('manage menu', () => {
     assert.match(calls.warnings[0].message, /This is the last account/);
     assert.equal(controller.state.status, 'NO_VAULT');
     assert.ok(calls.infos.some(({ message }) => message === 'Wallet deleted.'));
+  });
+
+  it('aborts the delete when focus-loss locks the wallet during the confirmation', async () => {
+    const { controller } = await unlockedWallet();
+    let pick = 0;
+    const { host, calls } = makeHost({
+      async showQuickPick(items) {
+        pick += 1;
+        if (pick === 1) return items.find((item) => item.kind === 'account');
+        return items.find((item) => item.action === 'delete');
+      },
+      async showWarningMessage(message, options, ...items) {
+        calls.warnings.push({ message, options, items });
+        // A real external blur during the confirmation must still win.
+        controller.lock('focus-lost');
+        return 'Delete';
+      },
+    });
+
+    await runWalletCommand(COMMAND_WALLET_MANAGE, {
+      controller,
+      panel: fakePanel(controller),
+      host,
+    });
+
+    assert.equal(calls.warnings[0].options.modal, undefined);
+    assert.equal(controller.state.status, 'LOCKED');
+    assert.equal(
+      calls.infos.some(
+        ({ message }) => message === 'Account deleted.' || message === 'Wallet deleted.',
+      ),
+      false,
+    );
+
+    const unlocked = await controller.unlock(TEST_PASSWORD);
+    assert.equal(unlocked.ok, true);
+    assert.equal(controller.state.snapshot.accounts.length, 1);
   });
 
   it('does not show account data in the locked menu', async () => {

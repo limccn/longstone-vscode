@@ -11,7 +11,9 @@
  *   lock can never trigger a stale action;
  * - `epoch` is captured before each `await` and compared afterwards; a lock
  *   during a prompt, panel or controller call drops the continuation before it
- *   can open a panel, write the clipboard, or claim success;
+ *   can open a panel, write the clipboard, or claim success. The reset flow is
+ *   the deliberate exception (D-2): it holds no session, so after each prompt it
+ *   re-checks `state.status === 'LOCKED'` instead of the epoch;
  * - create/import additionally hold a per-controller flow guard because both
  *   own `pendingFlowSecret` while no KDF is running (`busy` is `null` then);
  * - `lock` is the one command allowed to run while `busy !== null`: design
@@ -305,9 +307,11 @@ async function promptPasswordPair(
     const first = await promptNewPassword(host.showInputBox, {
       prompt,
       confirmWeak: async () => {
+        // In-window warning: a native modal would blur the window, fire the
+        // focus-loss lock, and the epoch check below would abort the flow (D-2).
         const answer = await host.showWarningMessage(
           `${WEAK_PASSWORD_WARNING}\n\nUse it anyway?`,
-          { modal: true },
+          {},
           WEAK_PASSWORD_CONFIRM,
           WEAK_PASSWORD_REJECT,
         );
@@ -823,15 +827,18 @@ async function runReset(
   host: WalletCommandHost,
 ): Promise<void> {
   if (controller.state.status !== 'LOCKED') return;
-  const epoch = controller.epoch;
 
+  // In-window warning, never a native modal (D-2): a modal takes OS focus,
+  // fires the focus-loss lock, and the state check below would abort.
   const answer = await host.showWarningMessage(
     RESET_WARNING,
-    { modal: true },
+    {},
     RESET_CONFIRM_LABEL,
     'Cancel',
   );
-  if (!isStateCurrent(controller, epoch, 'LOCKED')) {
+  // Reset only cares that the wallet is still locked. It holds no secrets and
+  // `reset()` bumps the epoch itself, so the epoch is not compared here.
+  if (controller.state.status !== 'LOCKED') {
     showNotice(controller, host);
     return;
   }
@@ -842,7 +849,7 @@ async function runReset(
     placeHolder: RESET_PHRASE,
     validate: (value) => (value === RESET_PHRASE ? undefined : 'Type RESET exactly.'),
   });
-  if (!isStateCurrent(controller, epoch, 'LOCKED')) {
+  if (controller.state.status !== 'LOCKED') {
     showNotice(controller, host);
     return;
   }

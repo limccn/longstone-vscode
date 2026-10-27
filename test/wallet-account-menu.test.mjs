@@ -156,7 +156,7 @@ describe('delete confirmation', () => {
     assert.match(last, /cannot be undone/);
   });
 
-  it('requires the modal Delete answer', async () => {
+  it('requires an in-window Delete answer (no native modal)', async () => {
     const calls = [];
     const answered = await confirmDelete(
       async (message, options, ...items) => {
@@ -167,7 +167,9 @@ describe('delete confirmation', () => {
       true,
     );
     assert.equal(answered, true);
-    assert.equal(calls[0].options.modal, true);
+    // D-2: a native modal takes OS focus, fires the focus-loss lock, and the
+    // caller's post-dialog epoch check aborts the delete.
+    assert.equal(calls[0].options.modal, undefined);
     assert.deepEqual(calls[0].items, [DELETE_CONFIRM_LABEL, 'Cancel']);
 
     const declined = await confirmDelete(async () => undefined, 'Main', false);
