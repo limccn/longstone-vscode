@@ -9,6 +9,9 @@ concurrency:
   group: ci-${{ github.ref }}
   cancel-in-progress: true
 
+permissions:
+  contents: read
+
 # `package.json` depends on `@limccn/longstone-surface`,
 # `@limccn/longstone-wallet` and `@limccn/menhir-core` via `workspace:*`, and
 # this repo is one package of the MemoryOverEth workspace. CI assembles that
@@ -58,12 +61,14 @@ jobs:
           printf 'packages:\n  - "menhir/ts"\n  - "longstone-surface"\n  - "longstone-wallet"\n  - "longstone-vscode"\nallowBuilds:\n  "esbuild": true\n  "@vscode/vsce-sign": true\n' > pnpm-workspace.yaml
           printf '{"name":"ci-workspace","private":true,"packageManager":"pnpm@12.11.2"}\n' > package.json
 
-      - uses: pnpm/action-setup@v4
+      - uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1 # v4
         with:
           package_json_file: workspace/package.json
       - uses: actions/setup-node@v4
         with:
           node-version: 24
+      # L-6 exception: assembled workspace cannot use a frozen lockfile.
+      # See https://github.com/limccn/longstone/blob/main/docs/supply-chain.md
       - run: pnpm install --no-frozen-lockfile
         working-directory: workspace
 
