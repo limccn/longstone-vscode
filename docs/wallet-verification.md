@@ -222,13 +222,15 @@ Preconditions: wallet exists.
 Steps:
 
 1. While unlocked, run `Longstone: Reset Wallet`.
-2. Lock, run the command again: accept the modal warning with `Continue`, then
-   type `RESET` and confirm.
+2. Lock, run the command again: click `Continue` in the warning notification,
+   then type `RESET` and confirm.
 3. Re-run `Longstone: Manage Wallet`.
 
 Expected:
 
 - While unlocked: `Lock the wallet before resetting it.` Nothing is deleted.
+- The confirmation is an in-window notification (D-2): the window keeps focus,
+  the wallet stays `LOCKED`, and the `RESET` prompt appears.
 - After the typed confirmation: `Wallet deleted.`; state is `NO_VAULT`; the
   status bar shows no address.
 - The checker exits 1 with `missing wallet record` — the expected
@@ -239,7 +241,7 @@ Expected:
 Preconditions: unlocked wallet with exactly one account.
 
 Steps: `Longstone: Manage Wallet` → accounts → delete the only account;
-accept the last-account warning.
+click `Delete` in the last-account warning notification (in-window since D-2).
 
 Expected: warning names the account and says the wallet itself will be
 deleted; after confirmation the message is `Wallet deleted.`, both
@@ -331,23 +333,28 @@ material.
 
 | # | Case | Result (Pass/Fail/Blocked) | Executor | Date | Notes |
 |---|---|---|---|---|---|
-| M1 | Create a wallet | | | | |
-| M2 | Import mnemonic and private key | | | | |
-| M3 | Wrong password and unlock backoff | | | | |
-| M4 | Lock | | | | |
-| M5 | Export with the 60 s countdown | | | | |
-| M6 | Change password | | | | |
-| M7 | Reset | | | | |
-| M8 | Delete the last account | | | | |
-| M9 | Idle lock (15 minutes) | | | | |
-| M10 | Focus loss | | | | |
-| M11 | Two windows, external change | | | | |
-| M12 | Remote-SSH refusal | | | | |
-| M13 | Ciphertext at rest | | | | |
-| M14 | Reload keeps the wallet locked | | | | |
+| M1 | Create a wallet | Pass | Claude Code (AI) | 2026-10-26 | Closing the panel without "I saved it" wrote nothing; after saving, `Wallet created. Back up your recovery phrase offline.`, status `0x8E6a…9625, Account 1`; one record (kdf 65536/3/1, ciphertext 380 B), pending absent. D-1: VS Code 1.143 keeps `globalState` in a per-extension container, so the shipped checker cannot see the record; verified with a read-only container inspector. |
+| M2 | Import mnemonic and private key | Pass | Claude Code (AI) | 2026-10-26 | Invalid mnemonic rejected in the panel with the wordlist message and no write; `TEST_MNEMONIC` → `0xf39F…2266` matching an independent derivation, reproducible after lock/unlock; fresh DB + `TEST_PRIVATE_KEY` → `0x7099…79C8` matching derivation. A malformed key wrote nothing but showed no error (D-3). |
+| M3 | Wrong password and unlock backoff | Pass | Claude Code (AI) | 2026-10-26 | Every wrong attempt reported the decrypt failure; attempt pacing measured 1.3/2.2/4.2/8.3/16.2/30.3 s. The notice shows the **remaining** delay (1/3/7/15/29 s) — the 1 s rung is absorbed by ~1.3 s of prompt overhead; the unit test pins the nominal 1/2/4/8/16/30 ladder. Re-lock kept the limiter (`The wallet is already locked.`); the correct password unlocked after the cap; reload reset only the in-process counter (no delay 1.35 s after a 30 s cap). |
+| M4 | Lock | Pass | Claude Code (AI) | 2026-10-26 | `Wallet locked.`; the status bar hid the address; `Copy Wallet Address` refused with `Unlock the wallet first.`. |
+| M5 | Export with the 60 s countdown | Pass | Claude Code (AI) | 2026-10-26 | Wrong password: `Incorrect password. Nothing was exported.`, no panel. Correct: secret panel with a countdown (first read 59 s after render, 55 s after 3 s); early close discarded it; reopen restarted at 58 s; Copy produced a 12-word phrase (count only, clipboard cleared, no screenshot of the panel); auto-closed at zero; wallet stayed unlocked. |
+| M6 | Change password | Pass | Claude Code (AI) | 2026-10-26 | `Password changed.` with the session still unlocked; old password failed, new password unlocked `0x8E6a…9625`; one record and pending absent (read-only container inspector). |
+| M7 | Reset | Fail | Claude Code (AI) | 2026-10-26 | Unlocked reset correctly refused (Pass part). Locked reset opens a native modal whose activation triggers the focus-loss lock; the flow then aborts silently — no `RESET` prompt, no deletion, no message. `window.dialogStyle: "custom"` confirms the cause, but the default `native` path is broken. D-2. |
+| M8 | Delete the last account | Fail | Claude Code (AI) | 2026-10-26 | The last-account warning appears (Pass part); the wallet locks the moment the modal opens, accepting `Delete` does nothing, and the wallet remains. D-2. |
+| M9 | Idle lock (15 minutes) | Blocked | Claude Code (AI) | 2026-10-26 | Three attempts, all invalidated by the environment. Unrelated windows took the foreground at 142 s (Chrome) and 41 s (`CC Switch`); the focus-loss lock fired in both. A third 17-minute observation with foreground sampling reached 779 s before the status bar showed `Locked` — 121 s short of the 900 s deadline. The check right after showed the session still Active and Unlocked (WTSINFOEX `SessionState=0`, `SessionFlags=1`), the input desktop `Default`, no LogonUI in the session, and `GetLastInputInfo` showed no human input during the run; but the foreground handle had become 0, `SetForegroundWindow` failed, and screen capture failed with an invalid handle (the start-of-run capture rendered fine) — the session's display output was suspended, VS Code was deactivated, and the wallet locked on focus loss as designed. The 15-minute idle timer was not observed. The controller test pins 900 000 ms with a 30 s check interval. Not a product defect; re-runnable on a session that can hold foreground and display output for 16+ minutes. |
+| M10 | Focus loss | Pass | Claude Code (AI) | 2026-10-26 | Switching to Notepad and back locked immediately; the reveal panel was gone, the address hidden, and an unlock was required. |
+| M11 | Two windows, external change | Fail | Claude Code (AI) | 2026-10-26 | Window A locked within 1 s of B gaining focus, but the `Wallet data changed in another window. Unlock again.` notice never appeared in the 10 s poll (external polling runs only while UNLOCKED); after re-unlocking, A showed B's rename. D-4. |
+| M12 | Remote-SSH refusal | Blocked | Claude Code (AI) | 2026-10-26 | No remote environment: both profiles have only the test extension installed, no `ms-vscode-remote.*`, no SSH config, and local-only window titles. The three commands could not be run in a remote window; the wallet is local-only by design, so no remote storage write path exists. |
+| M13 | Ciphertext at rest | Fail | Claude Code (AI) | 2026-10-26 | VS Code closed. The shipped checker exits 1 with `missing wallet record` on both profiles because 1.143 stores `globalState` under the per-extension container (D-1). The read-only container inspector exits 0: record ok (65536/3/1, ciphertext 380 B), pending absent, no salt/IV/ciphertext/phrase in the output, and the strict parser enforces exactly the seven envelope keys with no plaintext fields. The at-rest property holds; the checker is unusable on 1.143. |
+| M14 | Reload keeps the wallet locked | Pass | Claude Code (AI) | 2026-10-26 | After `Developer: Reload Window` the wallet came back `LOCKED`, the address was hidden, `Manage Wallet` offered `Unlock / Change password / Reset wallet`, and a panel open before the reload did not return. |
 
-Build verified: version `__________` · commit `__________` · VS Code
-`__________` · OS `__________`.
+Owner sign-off: 2026-10-26 — accepted as recorded above (8 Pass, 4 Fail,
+2 Blocked). M9 stays `Blocked` for environment reasons and is to be re-run on a
+session that can hold foreground and display output; the failures and blocked
+cases are tracked as D-1…D-4 in `.trellis/tasks/10-26-vscode-wallet-gui-matrix`.
+
+Build verified: version `0.2.2` · commit `f3b4c13` · VS Code
+`1.143.1 (e646868227c3e3a9e3f24277c8c7220be42c0be7)` · OS `Windows Server 2022 Standard Evaluation 10.0.20348`.
 
 ## 5. Known limitations
 
