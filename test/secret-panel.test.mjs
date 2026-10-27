@@ -27,6 +27,7 @@ const vscode = await import('vscode');
 const { SecretPanel } = await import(
   new URL('../src/host/wallet/secret-panel.ts', import.meta.url).href
 );
+const { TEST_PRIVATE_KEY } = await import('./wallet-helpers.mjs');
 
 const MNEMONIC_A =
   'abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about';
@@ -83,6 +84,10 @@ function deps(controller) {
 
 function openCreate(panel, value, onClose) {
   return panel.open({ mode: 'create-reveal', kind: 'mnemonic', value }, { onClose });
+}
+
+function openImport(panel, kind, onClose) {
+  return panel.open({ mode: 'import', kind }, { onClose });
 }
 
 test.beforeEach(() => {
@@ -188,4 +193,54 @@ test('shutdown is terminal: no panel can be opened afterwards', () => {
   assert.equal(reopened.ok, false);
   assert.equal(reopened.code, 'OPERATION_CANCELLED');
   assert.equal(vscode.panelCount(), 1, 'no panel is created after shutdown');
+});
+
+test('a malformed private key shows the format error instead of being dropped', () => {
+  const controller = fakeController();
+  const panel = new SecretPanel(deps(controller));
+  assert.equal(openImport(panel, 'privateKey').ok, true);
+  const live = vscode.lastPanel();
+
+  live.send({ type: 'submit-private-key', value: '0x1234' });
+
+  assert.equal(live.disposed, false, 'the import panel stays open for retry');
+  assert.equal(controller.pending, null, 'nothing becomes a pending secret');
+  assert.deepEqual(live.webview.posted.at(-1), {
+    type: 'error',
+    message: 'The private key must be 0x followed by 64 hex characters.',
+  });
+  panel.dispose();
+});
+
+test('an out-of-range private key reports the range error', () => {
+  const controller = fakeController();
+  const panel = new SecretPanel(deps(controller));
+  assert.equal(openImport(panel, 'privateKey').ok, true);
+  const live = vscode.lastPanel();
+
+  live.send({ type: 'submit-private-key', value: `0x${'0'.repeat(64)}` });
+
+  assert.equal(live.disposed, false);
+  assert.equal(controller.pending, null);
+  assert.deepEqual(live.webview.posted.at(-1), {
+    type: 'error',
+    message: 'The private key is not a valid secp256k1 key.',
+  });
+  panel.dispose();
+});
+
+test('a valid private key closes the import panel and keeps the pending secret', () => {
+  const controller = fakeController();
+  const panel = new SecretPanel(deps(controller));
+  const closes = [];
+  assert.equal(openImport(panel, 'privateKey', (outcome) => closes.push(outcome)).ok, true);
+  const live = vscode.lastPanel();
+
+  live.send({ type: 'submit-private-key', value: TEST_PRIVATE_KEY });
+
+  assert.deepEqual(closes, ['saved']);
+  assert.equal(live.disposed, true);
+  assert.equal(controller.pending.kind, 'privateKey');
+  assert.equal(controller.pending.value, TEST_PRIVATE_KEY);
+  panel.dispose();
 });

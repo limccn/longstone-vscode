@@ -10,8 +10,8 @@
  * Guards are strict and side-effect free:
  * - unknown message types and unknown fields are rejected;
  * - `mode`/`kind` pairs and mode/action pairs are checked explicitly;
- * - mnemonic text is bounded at 1 KiB of UTF-8 and private keys must be
- *   exactly `0x` + 64 hex characters;
+ * - mnemonic text and private-key input are bounded at 1 KiB of UTF-8; a
+ *   host-supplied private key must still be exactly `0x` + 64 hex characters;
  * - labels and UI copy are bounded and may not contain control/bidi
  *   characters.
  *
@@ -24,6 +24,8 @@ export type SecretKind = 'mnemonic' | 'privateKey';
 
 /** Same bound as the core (`MAX_MNEMONIC_BYTES`); kept local, not imported. */
 export const MAX_MNEMONIC_BYTES = 1024;
+/** Import-form bound; the core decides between FORMAT and RANGE errors. */
+export const MAX_PRIVATE_KEY_INPUT_BYTES = 1024;
 /** Same bound as the core (`MAX_LABEL_CODEPOINTS`); kept local, not imported. */
 export const MAX_LABEL_CODEPOINTS = 64;
 export const MAX_UI_MESSAGE_CODEPOINTS = 512;
@@ -117,6 +119,19 @@ export function isMnemonicText(value: unknown): value is string {
 /** `0x` + exactly 64 hex characters (66 total); the core checks the range. */
 export function isPrivateKeyText(value: unknown): value is string {
   return typeof value === 'string' && PRIVATE_KEY_TEXT.test(value);
+}
+
+/**
+ * Non-empty import input within the core's 1 KiB bound. Format and range are
+ * deliberately left to `parsePrivateKeyInput` so a malformed key reaches the
+ * panel's error path instead of being dropped as an unknown shape.
+ */
+function isPrivateKeyInputText(value: unknown): value is string {
+  return (
+    typeof value === 'string' &&
+    value.length > 0 &&
+    utf8ByteLength(value) <= MAX_PRIVATE_KEY_INPUT_BYTES
+  );
 }
 
 export function isAddressText(value: unknown): value is string {
@@ -293,7 +308,7 @@ export function parseWebviewToHostMessage(raw: unknown): SecretWebviewMessage | 
     case 'submit-private-key': {
       if (!hasOnlyKeys(record, ['type', 'value'])) return null;
       const value = record['value'];
-      return isPrivateKeyText(value) ? { type: 'submit-private-key', value } : null;
+      return isPrivateKeyInputText(value) ? { type: 'submit-private-key', value } : null;
     }
     default:
       return null;

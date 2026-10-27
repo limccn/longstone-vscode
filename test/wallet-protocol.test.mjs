@@ -221,6 +221,13 @@ test('webview messages accept the six defined shapes', () => {
     { type: 'cancel' },
     { type: 'submit-mnemonic', value: MNEMONIC },
     { type: 'submit-private-key', value: PRIVATE_KEY },
+    // Malformed import input must reach the panel's error path (D-3).
+    { type: 'submit-private-key', value: '0x1234' },
+    { type: 'submit-private-key', value: `0x${'ab'.repeat(31)}` },
+    { type: 'submit-private-key', value: `0x${'ab'.repeat(33)}` },
+    { type: 'submit-private-key', value: `0x${'0'.repeat(64)}` },
+    // Exactly 1 KiB of UTF-8 is still accepted; the bound is bytes, not chars.
+    { type: 'submit-private-key', value: `0x${'a'.repeat(1022)}` },
   ];
   for (const raw of cases) {
     assert.deepEqual(parseWebviewToHostMessage(raw), raw, raw.type);
@@ -239,8 +246,11 @@ test('webview messages reject unknown types, extra fields and malformed values',
     { type: 'submit-mnemonic', value: 5 },
     { type: 'submit-mnemonic', value: 'a'.repeat(1025) },
     { type: 'submit-mnemonic', value: '' },
-    { type: 'submit-private-key', value: `0x${'ab'.repeat(31)}` },
-    { type: 'submit-private-key', value: `0x${'ab'.repeat(33)}` },
+    { type: 'submit-private-key', value: '' },
+    { type: 'submit-private-key', value: 5 },
+    { type: 'submit-private-key', value: 'a'.repeat(1025) },
+    // 1025 bytes with a well-formed prefix: rejected by the byte bound alone.
+    { type: 'submit-private-key', value: `0x${'a'.repeat(1023)}` },
     { type: 'submit-private-key', value: PRIVATE_KEY, extra: true },
   ];
   for (const raw of rejects) {
