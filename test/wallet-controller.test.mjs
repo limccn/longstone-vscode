@@ -652,16 +652,149 @@ describe('WalletController external changes', () => {
     assert.equal(controller.notice, UNVERIFIED);
   });
 
-  it('does not poll while locked, empty, or remote', async () => {
+  it('does not poll while empty or remote', async () => {
     const empty = makeWallet();
     assert.equal(await empty.controller.pollExternal(), false);
-
-    const locked = await lockedWallet();
-    assert.equal(await locked.controller.pollExternal(), false);
 
     const remote = makeWallet({ availability: { available: false, code: 'remote' } });
     assert.equal(await remote.controller.pollExternal(), false);
     assert.equal(remote.memento.reads.length, 0);
+  });
+
+  it('leaves a locked wallet alone when the record is unchanged', async () => {
+    const { controller, memento } = await lockedWallet();
+    const reads = memento.reads.length;
+
+    assert.equal(await controller.pollExternal(), false);
+
+    assert.equal(memento.reads.length - reads, 1, 'one read-only probe');
+    assert.equal(controller.state.status, 'LOCKED');
+    assert.equal(controller.notice, null);
+  });
+
+  it('detects an external change while the wallet is locked', async () => {
+    const { controller, memento, storage } = await lockedWallet();
+    const before = controller.state.record?.recordHash;
+    const epoch = controller.epoch;
+
+    rivalRecord(memento, storage.keys.record);
+    assert.equal(await controller.pollExternal(), true);
+
+    assert.equal(controller.state.status, 'LOCKED');
+    assert.notEqual(controller.state.record?.recordHash, before);
+    assert.equal(controller.notice, EXTERNAL_NOTICE);
+    assert.equal(controller.lastLockReason, 'external-change');
+    assert.ok(controller.epoch > epoch);
+  });
+
+  it('detects an external change after focus loss locks the wallet (M11)', async () => {
+    const { controller, memento, storage } = await unlockedWallet();
+    await controller.handleWindowFocus(false);
+    assert.equal(controller.state.status, 'LOCKED');
+    assert.equal(controller.lastLockReason, 'focus-lost');
+
+    rivalRecord(memento, storage.keys.record);
+    await controller.handleWindowFocus(true);
+
+    assert.equal(controller.state.status, 'LOCKED');
+    assert.equal(controller.notice, EXTERNAL_NOTICE);
+    assert.equal(controller.lastLockReason, 'external-change');
+  });
+
+  it('goes to NO_VAULT when the record is deleted while locked', async () => {
+    const { controller, memento, storage } = await lockedWallet();
+    memento.deleteExternal(storage.keys.record);
+    memento.deleteExternal(storage.keys.pending);
+
+    assert.equal(await controller.pollExternal(), true);
+    assert.equal(controller.state.status, 'NO_VAULT');
+    assert.equal(controller.notice, EXTERNAL_NOTICE);
+  });
+
+  it('stays quiet when a locked-wallet probe cannot read the record', async () => {
+    const { controller, memento, storage } = await lockedWallet();
+    memento.failNextGet = { key: storage.keys.record };
+
+    assert.equal(await controller.pollExternal(), false);
+    assert.equal(controller.state.status, 'LOCKED');
+    assert.equal(controller.notice, null);
+  });
+
+  it('stays quiet for a pending-only wallet while locked (interrupted change)', async () => {
+    const { controller, memento, storage } = await unlockedWallet();
+    // An interrupted password change leaves only the pending record.
+    memento.setExternal(storage.keys.pending, memento.raw(storage.keys.record));
+    memento.deleteExternal(storage.keys.record);
+    controller.lock('explicit');
+    await controller.load();
+    assert.equal(controller.state.status, 'LOCKED');
+    assert.equal(controller.state.recoveryPending, true);
+
+    assert.equal(await controller.pollExternal(), false);
+
+    assert.equal(controller.state.status, 'LOCKED');
+    assert.equal(controller.state.recoveryPending, true);
+    assert.equal(controller.notice, null);
+    assert.equal(controller.lastLockReason, 'explicit');
+  });
+
+  it('stays quiet when the primary is corrupt but a pending record loads', async () => {
+    const { controller, memento, storage } = await unlockedWallet();
+    memento.setExternal(storage.keys.pending, memento.raw(storage.keys.record));
+    memento.setExternal(storage.keys.record, 'not json');
+    controller.lock('explicit');
+    await controller.load();
+    assert.equal(controller.state.status, 'LOCKED');
+    assert.equal(controller.state.recoveryPending, true);
+    assert.equal(controller.state.corrupt, true);
+
+    assert.equal(await controller.pollExternal(), false);
+    assert.equal(controller.notice, null);
+    assert.equal(controller.state.status, 'LOCKED');
+  });
+
+  it('does not report its own reset as an external change (D-4)', async () => {
+    const { controller } = await lockedWallet();
+
+    // Queue the probe behind the reset's removal task, the window in which a
+    // timer or focus event used to see the missing record and notify.
+    const resetting = controller.reset();
+    const probing = controller.pollExternal();
+    const result = await resetting;
+
+    assert.equal(result.ok, true);
+    assert.equal(await probing, false);
+    assert.equal(controller.state.status, 'NO_VAULT');
+    assert.equal(controller.notice, null);
+  });
+
+  it('does not report a completed locked password change as external (D-4)', async () => {
+    const started = deferred();
+    const gate = deferred();
+    const core = {
+      ...DEFAULT_WALLET_CORE,
+      async changePassword(deps, input) {
+        started.resolve();
+        await gate.promise;
+        return DEFAULT_WALLET_CORE.changePassword(deps, input);
+      },
+    };
+    const { controller } = await unlockedWallet({ core });
+
+    const pending = controller.changePassword(TEST_PASSWORD, NEW_PASSWORD);
+    await started.promise;
+    controller.lock('explicit');
+    // The poll lands after the change task but before its reload publishes
+    // the new record metadata.
+    const probing = controller.pollExternal();
+    gate.resolve();
+
+    const result = await pending;
+    assert.equal(result.ok, true);
+    assert.equal(result.value.locked, true);
+    assert.equal(await probing, false);
+    assert.equal(controller.state.status, 'LOCKED');
+    assert.match(controller.notice, /Password changed/);
   });
 });
 

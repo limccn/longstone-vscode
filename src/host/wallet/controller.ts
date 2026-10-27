@@ -609,33 +609,89 @@ export class WalletController {
     return this.#state;
   }
 
+  /**
+   * Compares the stored record against the hash this window last accepted.
+   * Both `UNLOCKED` and `LOCKED` are probed: window blur locks before another
+   * window writes, so the M11 change would otherwise be missed. A `LOCKED`
+   * probe that cannot read the record stays quiet rather than guess, and a
+   * pending-only `LOCKED` state is not probed at all because its metadata
+   * hashes the `pending` record, not the primary one.
+   */
   async pollExternal(): Promise<boolean> {
     if (!this.#availability.available || this.#disposed) return false;
-    if (this.#state.status !== 'UNLOCKED' || this.#session === null) return false;
+    const status = this.#state.status;
+    if (status !== 'UNLOCKED' && status !== 'LOCKED') return false;
+    if (status === 'UNLOCKED' && this.#session === null) return false;
 
     return this.#enqueue(async () => {
-      const session = this.#session;
-      if (session === null || this.#state.status !== 'UNLOCKED') return false;
+      // A wallet write in flight verifies itself (pre-write hash and read-back)
+      // and its state is transient; probing here would report its own reset or
+      // changed record as an external change before the reload lands.
+      if (this.#busy !== null) return false;
 
-      let value: unknown;
-      try {
-        const read = await this.#storage.get(this.#storage.keys.record);
-        value = read[this.#storage.keys.record];
-      } catch {
-        // Cannot verify the record: drop the key rather than keep it on trust.
-        await this.#lockAndReloadNow('external-change', walletUnverifiedMessage());
-        return true;
+      const current = this.#state;
+
+      if (current.status === 'UNLOCKED') {
+        const session = this.#session;
+        if (session === null) return false;
+
+        let value: unknown;
+        try {
+          const read = await this.#storage.get(this.#storage.keys.record);
+          value = read[this.#storage.keys.record];
+        } catch {
+          // Cannot verify the record: drop the key rather than keep it on trust.
+          await this.#lockAndReloadNow('external-change', walletUnverifiedMessage());
+          return true;
+        }
+
+        if (value === undefined || this.#core.hashRecord(value) !== session.recordHash) {
+          // An external delete goes through `loadVault` so a lone `pending`
+          // record stays recoverable instead of becoming NO_VAULT (VR-02).
+          await this.#lockAndReloadNow(
+            'external-change',
+            walletErrorMessage('WALLET_CHANGED_EXTERNALLY'),
+          );
+          return true;
+        }
+        return false;
       }
 
-      if (value === undefined || this.#core.hashRecord(value) !== session.recordHash) {
-        // An external delete goes through `loadVault` so a lone `pending`
-        // record stays recoverable instead of becoming NO_VAULT (VR-02).
-        await this.#lockAndReloadNow(
-          'external-change',
-          walletErrorMessage('WALLET_CHANGED_EXTERNALLY'),
-        );
-        return true;
+      if (current.status === 'LOCKED') {
+        // Window blur locks before another window writes, so the UNLOCKED
+        // branch can never observe the M11 change. Compare against the record
+        // metadata captured at load time. `null` means corrupt/unknown, and
+        // guessing would be worse than staying quiet.
+        if (current.recoveryPending) {
+          // A pending-only wallet took `#recordInfo` from the `pending` key, so
+          // its hash can never match the primary record. Probing would report
+          // a phantom external change on every poll; unlock/reload republishes
+          // primary metadata once that record exists again.
+          return false;
+        }
+        const expected = this.#recordInfo;
+        if (expected === null) return false;
+
+        let value: unknown;
+        try {
+          const read = await this.#storage.get(this.#storage.keys.record);
+          value = read[this.#storage.keys.record];
+        } catch {
+          // Already locked: a failed probe loses nothing, and claiming a
+          // change would be a guess.
+          return false;
+        }
+
+        if (value === undefined || this.#core.hashRecord(value) !== expected.recordHash) {
+          await this.#lockAndReloadNow(
+            'external-change',
+            walletErrorMessage('WALLET_CHANGED_EXTERNALLY'),
+          );
+          return true;
+        }
+        return false;
       }
+
       return false;
     });
   }

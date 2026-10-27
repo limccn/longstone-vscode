@@ -301,7 +301,12 @@ export function activate(context: vscode.ExtensionContext): void {
         controller.lock('focus-lost');
         return;
       }
-      void controller.handleWindowFocus(true);
+      void controller.handleWindowFocus(true).then(() => {
+        // An external change detected while the window was blurred has no
+        // command to surface it; show the static notice on focus return.
+        const notice = controller.consumeNotice();
+        if (notice !== null) void vscode.window.showInformationMessage(notice);
+      });
     }),
   );
 
