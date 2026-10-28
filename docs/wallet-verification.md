@@ -354,7 +354,7 @@ material.
 | # | Case | Result (Pass/Fail/Blocked) | Executor | Date | Notes |
 |---|---|---|---|---|---|
 | M1 | Create a wallet | Pass | Claude Code (AI) | 2026-10-26 | Closing the panel without "I saved it" wrote nothing; after saving, `Wallet created. Back up your recovery phrase offline.`, status `0x8E6a…9625, Account 1`; one record (kdf 65536/3/1, ciphertext 380 B), pending absent. D-1 at the time: verified with a read-only container inspector; the shipped checker now reads this layout too (see M13). |
-| M2 | Import mnemonic and private key | Pass | Claude Code (AI) | 2026-10-27 | Invalid mnemonic rejected in the panel with the wordlist message and no write; `TEST_MNEMONIC` → `0xf39F…2266` matching an independent derivation, reproducible after lock/unlock; fresh DB + `TEST_PRIVATE_KEY` → `0x7099…79C8` matching derivation. D-3 retest on a local VSIX: pasting `0x1234` and continuing shows `The private key must be 0x followed by 64 hex characters.`, the panel stays open with `Continue`/`Cancel`, and the record is unchanged with pending absent (checker exit 0). Supersedes the 2026-10-26 note that a malformed key wrote nothing but showed no error. |
+| M2 | Import mnemonic and private key | Pass | Claude Code (AI) | 2026-10-27 | Invalid mnemonic rejected in the panel with the wordlist message and no write; `TEST_MNEMONIC` → `0xf39F…2266` matching an independent derivation, reproducible after lock/unlock; fresh DB + `TEST_PRIVATE_KEY` → `0x7099…79C8` matching derivation. D-3 retest on a local VSIX: pasting `0x1234` and continuing shows `The private key must be 0x followed by 64 hex characters.`, the panel stays open with `Continue`/`Cancel`, and the record is unchanged with pending absent (checker exit 0). Supersedes the 2026-10-26 note that a malformed key wrote nothing but showed no error. 0.2.3 store-build (2026-10-28): Marketplace and Open VSX 0.2.3 artifacts installed in isolated profiles; the Recovery phrase panel rendered in both and an invalid short phrase was rejected with `The recovery phrase has the wrong number of words.`; evidence `.trellis/tasks/10-27-release-0.2.3-closure/research/live-e2e/`. |
 | M3 | Wrong password and unlock backoff | Pass | Claude Code (AI) | 2026-10-26 | Every wrong attempt reported the decrypt failure; attempt pacing measured 1.3/2.2/4.2/8.3/16.2/30.3 s. The notice shows the **remaining** delay (1/3/7/15/29 s) — the 1 s rung is absorbed by ~1.3 s of prompt overhead; the unit test pins the nominal 1/2/4/8/16/30 ladder. Re-lock kept the limiter (`The wallet is already locked.`); the correct password unlocked after the cap; reload reset only the in-process counter (no delay 1.35 s after a 30 s cap). |
 | M4 | Lock | Pass | Claude Code (AI) | 2026-10-26 | `Wallet locked.`; the status bar hid the address; `Copy Wallet Address` refused with `Unlock the wallet first.`. |
 | M5 | Export with the 60 s countdown | Pass | Claude Code (AI) | 2026-10-26 | Wrong password: `Incorrect password. Nothing was exported.`, no panel. Correct: secret panel with a countdown (first read 59 s after render, 55 s after 3 s); early close discarded it; reopen restarted at 58 s; Copy produced a 12-word phrase (count only, clipboard cleared, no screenshot of the panel); auto-closed at zero; wallet stayed unlocked. |
@@ -363,10 +363,25 @@ material.
 | M8 | Delete the last account | Pass | Claude Code (AI) | 2026-10-27 | Retested on the same local build: the last-account warning is an in-window notification with `Delete`/`Cancel`, no native dialog, window focused, wallet `UNLOCKED` while open. Accepting `Delete` → `Wallet deleted.`, state `NO_VAULT`; after closing VS Code the record and pending keys are absent (read-only container inspector). Supersedes the 2026-10-26 Fail (D-2). |
 | M9 | Idle lock (15 minutes) | Blocked | Claude Code (AI) | 2026-10-26 | Three attempts, all invalidated by the environment. Unrelated windows took the foreground at 142 s (Chrome) and 41 s (`CC Switch`); the focus-loss lock fired in both. A third 17-minute observation with foreground sampling reached 779 s before the status bar showed `Locked` — 121 s short of the 900 s deadline. The check right after showed the session still Active and Unlocked (WTSINFOEX `SessionState=0`, `SessionFlags=1`), the input desktop `Default`, no LogonUI in the session, and `GetLastInputInfo` showed no human input during the run; but the foreground handle had become 0, `SetForegroundWindow` failed, and screen capture failed with an invalid handle (the start-of-run capture rendered fine) — the session's display output was suspended, VS Code was deactivated, and the wallet locked on focus loss as designed. The 15-minute idle timer was not observed. The controller test pins 900 000 ms with a 30 s check interval. Not a product defect; re-runnable on a session that can hold foreground and display output for 16+ minutes. |
 | M10 | Focus loss | Pass | Claude Code (AI) | 2026-10-26 | Switching to Notepad and back locked immediately; the reveal panel was gone, the address hidden, and an unlock was required. |
-| M11 | Two windows, external change | Pass | Claude Code (AI) | 2026-10-27 | D-4 retest on a local VSIX (same profile, two windows): after B unlocked and renamed the account to `M11 Account`, focusing A showed `Wallet data changed in another window. Unlock again.` about 1 s after focus return without running a command; A stayed `Locked`; unlocking and opening Manage showed `M11 Account, 0x8E6a…9625 · active`. Supersedes the 2026-10-26 Fail (notice unreachable after focus-loss lock). |
+| M11 | Two windows, external change | Pass | Claude Code (AI) | 2026-10-27 | D-4 retest on a local VSIX (same profile, two windows): after B unlocked and renamed the account to `M11 Account`, focusing A showed `Wallet data changed in another window. Unlock again.` about 1 s after focus return without running a command; A stayed `Locked`; unlocking and opening Manage showed `M11 Account, 0x8E6a…9625 · active`. Supersedes the 2026-10-26 Fail (notice unreachable after focus-loss lock). 0.2.3 store-build (2026-10-28): both-store artifacts installed and activated; runtime code matches the c1da3ab retest build (`c1da3ab..7b459dd` changes docs/version/assert-manifest only); the two-window case was not re-executed in the 0.2.3 live pass; evidence `.trellis/tasks/10-27-release-0.2.3-closure/research/live-e2e/`. |
 | M12 | Remote-SSH refusal | Blocked | Claude Code (AI) | 2026-10-26 | No remote environment: both profiles have only the test extension installed, no `ms-vscode-remote.*`, no SSH config, and local-only window titles. The three commands could not be run in a remote window; the wallet is local-only by design, so no remote storage write path exists. |
-| M13 | Ciphertext at rest | Pass | Claude Code (AI) | 2026-10-27 | D-1 retest with the shipped checker on the closed VS Code 1.143 profile: exit 0, `layout container limccn.longstone-vscode`, record ok (kdf 65536/3/1, ciphertext 380 B), pending absent, no salt/IV/ciphertext/phrase in the output; deleting the record makes it exit 1 with `missing wallet record`. A live read-only `--json` check on the reopened profile also exits 0. The strict parser enforces exactly the seven envelope keys with no plaintext fields. Supersedes the 2026-10-26 Fail (checker blind to the container layout). |
+| M13 | Ciphertext at rest | Pass | Claude Code (AI) | 2026-10-27 | D-1 retest with the shipped checker on the closed VS Code 1.143 profile: exit 0, `layout container limccn.longstone-vscode`, record ok (kdf 65536/3/1, ciphertext 380 B), pending absent, no salt/IV/ciphertext/phrase in the output; deleting the record makes it exit 1 with `missing wallet record`. A live read-only `--json` check on the reopened profile also exits 0. The strict parser enforces exactly the seven envelope keys with no plaintext fields. Supersedes the 2026-10-26 Fail (checker blind to the container layout). 0.2.3 store-build (2026-10-28): both-store artifacts installed and activated; runtime code matches the c1da3ab retest build (`c1da3ab..7b459dd` changes docs/version/assert-manifest only); the at-rest case was not re-executed in the 0.2.3 live pass; evidence `.trellis/tasks/10-27-release-0.2.3-closure/research/live-e2e/`. |
 | M14 | Reload keeps the wallet locked | Pass | Claude Code (AI) | 2026-10-26 | After `Developer: Reload Window` the wallet came back `LOCKED`, the address was hidden, `Manage Wallet` offered `Unlock / Change password / Reset wallet`, and a panel open before the reload did not return. |
+
+0.2.3 store-build live check: 2026-10-28 — Marketplace and Open VSX 0.2.3
+(352,924 B, SHA-256 `53e6269…916fb`) were installed in separate isolated
+profiles and activated. Both rendered the Memory Browser and the
+Import → Recovery phrase secret panel; an invalid short phrase was rejected
+with `The recovery phrase has the wrong number of words.`; both `exthost.log`
+files contain no CSP error; both MCP servers reached
+`Connection state: Running` and `Discovered 3 tools`. This re-confirms the M2
+panel/error path on the shipped artifact. The full M2 successful-import, M11
+two-window and M13 at-rest cases were not re-executed in this live pass; their
+recorded outcomes come from the `c1da3ab` retest build, whose runtime code is
+identical to 0.2.3 (`c1da3ab..7b459dd` changes only README, docs, package
+version and assert-manifest). Owner sign-off for 0.2.3: 2026-10-28 — approved
+in-session by the owner (`你执行，我批准`); accepted as recorded, with M9 and
+M12 remaining `Blocked`.
 
 Owner sign-off: 2026-10-26 — accepted as recorded above (8 Pass, 4 Fail,
 2 Blocked). M9 stays `Blocked` for environment reasons and is to be re-run on a
@@ -380,12 +395,14 @@ notice); M12 remains environment-blocked.
 
 D-1/D-3/D-4 retest: 2026-10-27 — M11 and M13 now pass on a local VSIX built from
 the fix branch, and M2's D-3 note is cleared. Matrix: 12 Pass, 0 Fail, 2 Blocked
-(M9, M12). These retested rows are recorded here and await owner sign-off.
+(M9, M12). Owner sign-off: 2026-10-28 — accepted as recorded; M9 and M12 stay
+`Blocked`.
 
 Build verified: version `0.2.2` · commit `f3b4c13` · VS Code
 `1.143.1 (e646868227c3e3a9e3f24277c8c7220be42c0be7)` · OS `Windows Server 2022 Standard Evaluation 10.0.20348`.
 D-2 retest build: local VSIX from commit `081e3c2` · VS Code `1.143.1`.
 D-1/D-3/D-4 retest build: local VSIX `0.2.2-d134-local` from code commit `c1da3ab` · VS Code `1.143.1` (0.2.3 packages the same code).
+0.2.3 store build: Marketplace + Open VSX `0.2.3`, 352,924 B, SHA-256 `53e626993056e1cdd511c76c332c3571cd6f1ee130b01f2677d079556d4916fb`; runtime code identical to `c1da3ab`.
 
 ## 5. Known limitations
 
@@ -397,6 +414,9 @@ D-1/D-3/D-4 retest build: local VSIX `0.2.2-d134-local` from code commit `c1da3a
   for M10, and do not treat a VS Code quick pick as the blur test.
 - M12 verifies refusal only. The wallet is local-only by design; there is no
   remote-wallet mode to test.
+- The extension is not activated in Restricted Mode. Run the manual matrix in
+  a trusted workspace; the 0.2.3 live checks launched with
+  `--disable-workspace-trust`.
 - `state.vscdb` paths vary by build, profile and `--user-data-dir`; always pass
   `--db` when the default does not exist. Keep VS Code closed while checking.
 - The checker is diagnostic only; it is not part of the extension runtime and
