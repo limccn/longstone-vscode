@@ -292,8 +292,14 @@ describe('checkWalletDb', () => {
         result.lines.join('\n'),
         /record\s+longstone\.wallet\.v1\s+FAIL\s+container-unreadable/,
       );
+      // The first line prints the caller-supplied database path, which may
+      // itself contain the value (e.g. a temp directory named "tmp42"); the
+      // path is not record content, so assert against the status lines only.
+      const statusLines = result.lines
+        .filter((line) => !line.startsWith('state.vscdb: '))
+        .join('\n');
       assert.equal(
-        result.lines.join('\n').includes(String(value)),
+        statusLines.includes(String(value)),
         false,
         'the container value is never echoed',
       );
