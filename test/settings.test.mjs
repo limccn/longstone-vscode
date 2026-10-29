@@ -183,6 +183,6 @@ test('external-link allowlist and deep-link bases are fixed https origins', () =
   }
   assert.deepEqual(
     [...ALLOWED_EXTERNAL_HOSTS].sort(),
-    ['base-sepolia.blockscout.com', 'longstone-ui.pages.dev'],
+    ['base-sepolia.blockscout.com', 'longstone-ui.pages.dev', 'longstone.app'],
   );
 });

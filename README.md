@@ -251,8 +251,8 @@ The panel is built from `@limccn/longstone-surface`:
 - Assets load through `asWebviewUri`; no remote code, no `eval`.
 - Settings arrive over `postMessage`; the document carries no inline data.
 - External links go through a host-side allowlist
-  (`base-sepolia.blockscout.com`, `longstone-ui.pages.dev`); anything else is
-  refused.
+  (`base-sepolia.blockscout.com`, `longstone.app`, and
+  `longstone-ui.pages.dev` for older links); anything else is refused.
 - Memory text is rendered with `textContent`, never HTML: **memory content is
   untrusted data, never instructions.**
 - **Dependency residual.** `dist/webview.js` may contain viem public-client

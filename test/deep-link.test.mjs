@@ -16,8 +16,13 @@ const HASH = `0x${'ab'.repeat(32)}`;
 const ADDRESS = `0x${'12'.repeat(20)}`;
 
 test('a valid commitment hash builds a web-app deep link', () => {
-  assert.equal(commitmentDeepLink(HASH), `https://longstone-ui.pages.dev/commitment/${HASH}`);
-  assert.equal(retractDeepLink(HASH), `https://longstone-ui.pages.dev/retract?commitment=${HASH}`);
+  assert.equal(commitmentDeepLink(HASH), `https://longstone.app/commitment/${HASH}`);
+  assert.equal(retractDeepLink(HASH), `https://longstone.app/retract?commitment=${HASH}`);
+});
+
+test('every generated web-app deep link passes the external-open allowlist', () => {
+  assert.equal(isAllowedExternalUrl(commitmentDeepLink(HASH)), true);
+  assert.equal(isAllowedExternalUrl(retractDeepLink(HASH)), true);
 });
 
 test('malformed hashes never produce a link', () => {
@@ -66,14 +71,22 @@ test('IPFS URLs accept only alphanumeric CIDs', () => {
 });
 
 test('openExternal is limited to fixed https hosts', () => {
-  assert.equal(isAllowedExternalUrl(`https://longstone-ui.pages.dev/commitment/${HASH}`), true);
+  assert.equal(isAllowedExternalUrl(`https://longstone.app/commitment/${HASH}`), true);
   assert.equal(isAllowedExternalUrl(`https://base-sepolia.blockscout.com/tx/${HASH}`), true);
+  // The legacy Pages deployment stays allowlisted: links already handed to
+  // installed clients still point at it.
+  assert.equal(isAllowedExternalUrl(`https://longstone-ui.pages.dev/commitment/${HASH}`), true);
 
   for (const bad of [
+    'http://longstone.app/',
     'http://longstone-ui.pages.dev/',
+    'https://longstone.app.evil.com/',
     'https://longstone-ui.pages.dev.evil.com/',
+    'https://evil.com/https://longstone.app/',
     'https://evil.com/https://longstone-ui.pages.dev/',
+    'https://user:pass@longstone.app/',
     'https://user:pass@longstone-ui.pages.dev/',
+    'https://longstone.app:8443/',
     'https://longstone-ui.pages.dev:8443/',
     'javascript:alert(1)',
     'file:///etc/passwd',

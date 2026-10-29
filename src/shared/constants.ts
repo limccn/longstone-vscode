@@ -77,14 +77,19 @@ export const KEY_ENV = 'LONGSTONE_KEY';
 export const OWNER_KEY_ENV = 'LONGSTONE_OWNER_KEY';
 
 /** Fixed base for deep links to the web app; never taken from input (PS-8). */
-export const WEB_APP_BASE = 'https://longstone-ui.pages.dev';
+export const WEB_APP_BASE = 'https://longstone.app';
 
 /** Fixed base for explorer links. */
 export const BLOCKSCOUT_ORIGIN = 'https://base-sepolia.blockscout.com';
 
-/** Hosts the webview may ask the host to open externally. */
+/**
+ * Hosts the webview may ask the host to open externally. `longstone.app` is
+ * the current web-app domain; `longstone-ui.pages.dev` serves the same build
+ * and stays allowlisted for links already handed to installed clients.
+ */
 export const ALLOWED_EXTERNAL_HOSTS: readonly string[] = [
   'base-sepolia.blockscout.com',
+  'longstone.app',
   'longstone-ui.pages.dev',
 ];
 
